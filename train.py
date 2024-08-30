@@ -3,6 +3,7 @@ import torch
 from pathlib import Path
 from yacs.config import CfgNode as CN
 import pytorch_lightning as pl
+from pytorch_lightning.tuner.tuning import Tuner
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.strategies import DDPStrategy
@@ -84,9 +85,18 @@ def main():
         profiler=profiler,
     )
     loguru_logger.info("Trainer Initialized!")
+    
+    tuner = Tuner(trainer)
+    
+    lr_finder = tuner.lr_find(model)
+    
+    print(lr_finder.results)
+    
+    fig = lr_finder.plot(suggest=True)
+    fig.show()
 
-    loguru_logger.info("Start training!")
-    trainer.fit(model, datamodule=data_module)
+    # loguru_logger.info("Start training!")
+    # trainer.fit(model, datamodule=data_module)
 
 
 if __name__ == "__main__":

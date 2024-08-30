@@ -48,7 +48,7 @@ _CN.DATASET.TEST_NPZ_ROOT = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/index/scene_info
 _CN.DATASET.TEST_LIST_PATH = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/index/trainvaltest_list/val_list.txt"      # None if test data from all scenes are bundled into a single npz file
 _CN.DATASET.TEST_INTRINSIC_PATH = None
 # general options
-_CN.DATASET.MIN_OVERLAP_SCORE_TRAIN = 0.0           # discard data with overlap_score < min_overlap_score
+_CN.DATASET.MIN_OVERLAP_SCORE_TRAIN = 0.4           # discard data with overlap_score < min_overlap_score
 _CN.DATASET.MIN_OVERLAP_SCORE_TEST = 0.0
 _CN.DATASET.AUGMENTATION_TYPE = None                # options: [None, "dark", "mobile"]
 # MegaDepth options
@@ -78,7 +78,7 @@ _CN.TRAINER.GRADIENT_CLIPPING = 0.5                 # Gradient clipping
 _CN.TRAINER.CANONICAL_BS = 64
 _CN.TRAINER.CANONICAL_LR = 8e-3
 _CN.TRAINER.SCALING = None                          # this will be calculated automatically
-_CN.TRAINER.FIND_LR = True                         # use learning rate finder from pytorch-lightning
+_CN.TRAINER.FIND_LR = True                          # use learning rate finder from pytorch-lightning
 # optimizer
 _CN.TRAINER.OPTIMIZER = "AdamW"                     # options: [Adam, AdamW]
 _CN.TRAINER.TRUE_LR = 5e-2                          # this will be calculated automatically at runtime
