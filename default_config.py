@@ -81,7 +81,7 @@ _CN.TRAINER.SCALING = None                          # this will be calculated au
 _CN.TRAINER.FIND_LR = True                          # use learning rate finder from pytorch-lightning
 # optimizer
 _CN.TRAINER.OPTIMIZER = "AdamW"                     # options: [Adam, AdamW]
-_CN.TRAINER.TRUE_LR = 5e-2                          # this will be calculated automatically at runtime
+_CN.TRAINER.TRUE_LR = 0.10964781961431852           # using LR finder provided by pytorch lightning
 _CN.TRAINER.ADAM_DECAY = 0.1
 _CN.TRAINER.ADAMW_DECAY = 0.1
 # learning rate scheduler
