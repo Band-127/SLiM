@@ -41,14 +41,14 @@ def main():
         config.TRAINER.WARMUP_STEP / config.TRAINER.SCALING
     )
 
-    # lightning module
+    # Lightning module
     profiler = build_profiler(config.PROFILER.PROFILER_NAME)
     model = PL_MAFF(
         config=config, pretrained_ckpt=config.PRETRAINED_PATH, profiler=profiler
     )
     loguru_logger.info("MAFF Lightning Module initialized!")
 
-    # lightning data
+    # Lightning data
     data_module = MAFF_Dataset(config=config)
     loguru_logger.info("MAFF Data Module initialized!")
 
@@ -71,6 +71,7 @@ def main():
     lr_monitor = LearningRateMonitor(logging_interval="step")
     callbacks = [ckpt_callback, lr_monitor]
 
+    # Torch Lightning Trainer
     trainer = pl.Trainer(
         accelerator="gpu" if config.DEVICE.ENABLE_GPU else "cpu",
         strategy=DDPStrategy(find_unused_parameters=True)
