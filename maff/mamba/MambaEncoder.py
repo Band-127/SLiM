@@ -127,8 +127,19 @@ class DualInputMambaLayer(nn.Module):
         """
         assert x1.shape[-1] == self.in_output_dim and x2.shape[-1] == self.in_output_dim
 
-        x1 = self.mamba_layer(x1)
-        x2 = self.mamba_layer(x2)
+        # Flip and concat
+        x1_ = torch.concat((x1, x1.flip(dims=(-2,))), dim=-2)
+        x2_ = torch.concat((x2, x2.flip(dims=(-2,))), dim=-2)
+
+        # Go through shared-weight mamba
+        x1_ = self.mamba_layer(x1_)
+        x2_ = self.mamba_layer(x2_)
+
+        # Deconcat and fuse
+        L1 = x1.shape[-2]
+        L2 = x2.shape[-2]
+        x1 = 0.5 * (x1_[:, 0:L1, :] + x1_[:, L1:, :].flip(dims=(-2,)))
+        x2 = 0.5 * (x2_[:, 0:L2, :] + x2_[:, L2:, :].flip(dims=(-2,)))
 
         return x1, x2
 
@@ -172,13 +183,25 @@ class ConcatMambaLayer(nn.Module):
         self.dtype: torch.dtype = dtype
         self.using_mamba2: bool = using_mamba2
 
-        self.mamba_layer = DualInputMambaLayer(
-            in_output_dim=self.in_output_dim,
-            inner_expansion=self.inner_expansion,
-            conv_dim=self.conv_dim,
+        # vanilla Mamba builder
+        self.mamba_base = Mamba2 if self.using_mamba2 else Mamba
+
+        self.mamba_layer_forward = self.mamba_base(
+            d_model=in_output_dim,
+            d_state=64 if self.using_mamba2 else 16,
+            d_conv=4 if self.conv_dim is None else self.conv_dim,
+            expand=inner_expansion,
             device=self.device,
             dtype=self.dtype,
-            using_mamba2=self.using_mamba2,
+        )
+
+        self.mamba_layer_backward = self.mamba_base(
+            d_model=in_output_dim,
+            d_state=64 if self.using_mamba2 else 16,
+            d_conv=4 if self.conv_dim is None else self.conv_dim,
+            expand=inner_expansion,
+            device=self.device,
+            dtype=self.dtype,
         )
 
     def forward(
@@ -197,17 +220,18 @@ class ConcatMambaLayer(nn.Module):
         assert x1.shape[-1] == self.in_output_dim and x2.shape[-1] == self.in_output_dim
 
         # 1. Bidirectional scan
-        x1_ = torch.concat(tensors=(x1, x2), dim=-2)
-        x2_ = torch.concat(tensors=(x2, x1), dim=-2)
+        xf = torch.concat(tensors=(x1, x2), dim=-2)
+        xb = xf.flip(dims=(-2,))
 
         # 2. Enter mamba layer
-        x1_, x2_ = self.mamba_layer(x1_, x2_)
+        xf = self.mamba_layer_forward(xf)
+        xb = self.mamba_layer_forward(xb)
 
         # 3. Fuse both scanning direction into one and restore into two features
+        x = 0.5 * (xf + xb.flip(dims=(-2,)))
         L1 = x1.shape[-2]
-        L2 = x2.shape[-2]
-        x1 = 0.5 * (x1_[:, 0:L1, :] + x2_[:, L1:, :])
-        x2 = 0.5 * (x1_[:, L2:, :] + x2_[:, 0:L2:, :])
+        x1 = x[:, 0:L1, :]
+        x2 = x[:, L1:, :]
 
         return x2, x2
 

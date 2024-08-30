@@ -48,7 +48,7 @@ _CN.DATASET.TEST_NPZ_ROOT = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/index/scene_info
 _CN.DATASET.TEST_LIST_PATH = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/index/trainvaltest_list/val_list.txt"      # None if test data from all scenes are bundled into a single npz file
 _CN.DATASET.TEST_INTRINSIC_PATH = None
 # general options
-_CN.DATASET.MIN_OVERLAP_SCORE_TRAIN = 0.4           # discard data with overlap_score < min_overlap_score
+_CN.DATASET.MIN_OVERLAP_SCORE_TRAIN = 0.0           # discard data with overlap_score < min_overlap_score
 _CN.DATASET.MIN_OVERLAP_SCORE_TEST = 0.0
 _CN.DATASET.AUGMENTATION_TYPE = None                # options: [None, "dark", "mobile"]
 # MegaDepth options
@@ -128,8 +128,8 @@ _CN.MODEL.MAMBA_FUSION = CN()
 _CN.MODEL.MAMBA_FUSION.USING_MAMBA2 = True          # Whether using mamba2 or not
 _CN.MODEL.MAMBA_FUSION.INNER_EXPANSION = 2          # Inner dimension expansion rate for mamba, inner dimension=rate*input dimension
 _CN.MODEL.MAMBA_FUSION.CONV_DIM = 4                 # Conv dimension for mamba
-_CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER = 0           # number of "self attn." layer
-_CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER = 4          # number of "cross attn." layer
+_CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER = 4           # number of "self attn." layer
+_CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER = 0          # number of "cross attn." layer
 _CN.MODEL.MAMBA_FUSION.LAYER_TYPES = ["self"] * _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER + \
                                      ["cross"] * _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER
 # Transformer Feature Fusion (comparison)

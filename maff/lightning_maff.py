@@ -48,6 +48,8 @@ class PL_MAFF(pl.LightningModule):
         self.coarse_scale = self.config.MODEL.COARSE_SCALE
 
         self.validation_outputs = []
+        
+        self.lr = self.config.TRAINER.TRUE_LR
 
     def configure_optimizers(self):
         # optimizer
