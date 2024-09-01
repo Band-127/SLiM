@@ -17,7 +17,7 @@ _CN.PRETRAINED_PATH = None
 _CN.DEVICE = CN()
 _CN.DEVICE.ENABLE_GPU = True        # Whether enable GPUs, default true
 _CN.DEVICE.ENABLE_DDP = True        # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "0,2,3,4,5,6"      # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.GPU_IDX = "0,2,3,4,5,6"  # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
@@ -81,18 +81,18 @@ _CN.TRAINER.SCALING = None                          # this will be calculated au
 _CN.TRAINER.FIND_LR = True                          # use learning rate finder from pytorch-lightning
 # optimizer
 _CN.TRAINER.OPTIMIZER = "AdamW"                     # options: [Adam, AdamW]
-_CN.TRAINER.TRUE_LR = 0.10964781961431852           # using LR finder provided by pytorch lightning
+_CN.TRAINER.TRUE_LR = 2e-3                          # using LR finder provided by pytorch lightning
 _CN.TRAINER.ADAM_DECAY = 0.1
 _CN.TRAINER.ADAMW_DECAY = 0.1
 # learning rate scheduler
 _CN.TRAINER.SCHEDULER = "MultiStepLR"               # options: [MultiStepLR, CosineAnnealing, ExponentialLR]
 _CN.TRAINER.SCHEDULER_INTERVAL = "epoch"            # [epoch, step]
-_CN.TRAINER.MSLR_MILESTONES = [3, 6, 9, 12]         # MSLR: MultiStepLR
+_CN.TRAINER.MSLR_MILESTONES = [2, 4, 8, 12, 16]     # MSLR: MultiStepLR
 _CN.TRAINER.MSLR_GAMMA = 0.5
 _CN.TRAINER.COSA_TMAX = 30                          # COSA: CosineAnnealing
 _CN.TRAINER.ELR_GAMMA = 0.999992                    # ELR: ExponentialLR, this value for "step" interval
 # step-based warm-up
-_CN.TRAINER.WARMUP_TYPE = 'linear'                  # options: [linear, constant]
+_CN.TRAINER.WARMUP_TYPE = 'constant'                # options: [linear, constant]
 _CN.TRAINER.WARMUP_RATIO = 0.1
 _CN.TRAINER.WARMUP_STEP = 1875
 # plotting related
@@ -128,8 +128,8 @@ _CN.MODEL.MAMBA_FUSION = CN()
 _CN.MODEL.MAMBA_FUSION.USING_MAMBA2 = True          # Whether using mamba2 or not
 _CN.MODEL.MAMBA_FUSION.INNER_EXPANSION = 2          # Inner dimension expansion rate for mamba, inner dimension=rate*input dimension
 _CN.MODEL.MAMBA_FUSION.CONV_DIM = 4                 # Conv dimension for mamba
-_CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER = 4           # number of "self attn." layer
-_CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER = 0          # number of "cross attn." layer
+_CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER = 0           # number of "self attn." layer
+_CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER = 4          # number of "cross attn." layer
 _CN.MODEL.MAMBA_FUSION.LAYER_TYPES = ["self"] * _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER + \
                                      ["cross"] * _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER
 # Transformer Feature Fusion (comparison)

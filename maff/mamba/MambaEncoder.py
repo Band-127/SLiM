@@ -186,16 +186,7 @@ class ConcatMambaLayer(nn.Module):
         # vanilla Mamba builder
         self.mamba_base = Mamba2 if self.using_mamba2 else Mamba
 
-        self.mamba_layer_forward = self.mamba_base(
-            d_model=in_output_dim,
-            d_state=64 if self.using_mamba2 else 16,
-            d_conv=4 if self.conv_dim is None else self.conv_dim,
-            expand=inner_expansion,
-            device=self.device,
-            dtype=self.dtype,
-        )
-
-        self.mamba_layer_backward = self.mamba_base(
+        self.mamba_layer = self.mamba_base(
             d_model=in_output_dim,
             d_state=64 if self.using_mamba2 else 16,
             d_conv=4 if self.conv_dim is None else self.conv_dim,
@@ -224,8 +215,8 @@ class ConcatMambaLayer(nn.Module):
         xb = xf.flip(dims=(-2,))
 
         # 2. Enter mamba layer
-        xf = self.mamba_layer_forward(xf)
-        xb = self.mamba_layer_forward(xb)
+        xf = self.mamba_layer(xf)
+        xb = self.mamba_layer(xb)
 
         # 3. Fuse both scanning direction into one and restore into two features
         x = 0.5 * (xf + xb.flip(dims=(-2,)))
@@ -233,7 +224,7 @@ class ConcatMambaLayer(nn.Module):
         x1 = x[:, 0:L1, :]
         x2 = x[:, L1:, :]
 
-        return x2, x2
+        return x1, x2
 
 
 class MambaEncoder(nn.Module):

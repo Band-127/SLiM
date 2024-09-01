@@ -87,13 +87,13 @@ def main():
     )
     loguru_logger.info("Trainer Initialized!")
     
-    # Finding best LR
-    tuner = Tuner(trainer)
-    lr_finder = tuner.lr_find(model=model, datamodule=data_module)
-    print(f"Best LR found by LR finder :{lr_finder.suggestion()}")
+    # # Finding best LR
+    # tuner = Tuner(trainer)
+    # lr_finder = tuner.lr_find(model=model, datamodule=data_module)
+    # print(f"Best LR found by LR finder :{lr_finder.suggestion()}")
     
-    # Setting best LR
-    model.lr = lr_finder.suggestion()
+    # # Setting best LR
+    # model.lr = lr_finder.suggestion()
 
     # Training
     loguru_logger.info("Start training!")

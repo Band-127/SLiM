@@ -56,20 +56,20 @@ class PL_MAFF(pl.LightningModule):
         if self.config.TRAINER.OPTIMIZER == "Adam":
             optimizer = Adam(
                 self.parameters(),
-                lr=self.config.TRAINER.TRUE_LR,
+                lr=self.lr,
                 weight_decay=self.config.TRAINER.ADAM_DECAY,
             )
         elif self.config.TRAINER.OPTIMIZER == "AdamW":
             optimizer = AdamW(
                 self.parameters(),
-                lr=self.config.TRAINER.TRUE_LR,
+                lr=self.lr,
                 weight_decay=self.config.TRAINER.ADAMW_DECAY,
             )
         else:
             # Default: AdamW
             optimizer = AdamW(
                 self.parameters(),
-                lr=self.config.TRAINER.TRUE_LR,
+                lr=self.lr,
                 weight_decay=self.config.TRAINER.ADAMW_DECAY,
             )
 
@@ -126,17 +126,20 @@ class PL_MAFF(pl.LightningModule):
         if self.trainer.global_step < warmup_step:
             if self.config.TRAINER.WARMUP_TYPE == "linear":
                 base_lr = self.config.TRAINER.WARMUP_RATIO * self.config.TRAINER.TRUE_LR
-                lr = base_lr + (
+                self.lr = base_lr + (
                     self.trainer.global_step / self.config.TRAINER.WARMUP_STEP
                 ) * abs(self.config.TRAINER.TRUE_LR - base_lr)
                 for pg in optimizer.param_groups:
-                    pg["lr"] = lr
+                    pg["lr"] = self.lr
             elif self.config.TRAINER.WARMUP_TYPE == "constant":
                 pass
             else:
                 raise ValueError(
                     f"Unknown lr warm-up strategy: {self.config.TRAINER.WARMUP_TYPE}"
                 )
+        else:
+            for pg in optimizer.param_groups:
+                pg["lr"] = self.lr
         # update params
         optimizer.step(closure=optimizer_closure)
         optimizer.zero_grad()
