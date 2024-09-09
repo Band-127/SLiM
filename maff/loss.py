@@ -1,6 +1,7 @@
 from yacs.config import CfgNode as CN
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 
 class MAFF_Loss(nn.Module):
@@ -94,7 +95,12 @@ class MAFF_Loss(nn.Module):
         # 0. compute element-wise loss weight
         c_weight = self.compute_c_weight(data)
 
-        # 1. coarse-level loss
+        # 1. Coarse-level loss
+        # Get conf matrix from sim matrix using dual softmax operator
+        sim_matrix = data["sim_matrix"]
+        conf_matrix = F.softmax(sim_matrix, 1) * F.softmax(sim_matrix, 2)
+        data.update({"conf_matrix": conf_matrix})
+        
         loss_c = self.compute_coarse_loss(
             data["conf_matrix"],
             data["conf_matrix_gt"],
@@ -102,4 +108,8 @@ class MAFF_Loss(nn.Module):
         )
         loss: torch.Tensor = loss_c * self.config["COARSE_WEIGHT"]
         loss_scalars.update({"loss_c": loss.clone().detach().cpu()})
+        
+        # 2. Fine-level loss
+        
+        # 3. Total loss
         data.update({"loss": loss, "loss_scalars": loss_scalars})

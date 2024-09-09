@@ -10,14 +10,14 @@ _CN.OVERALL_MODE = "train"          # options: ["train", "test"]
 _CN.GLOBAL_SEED = None              # for reproducibility, None for random
 _CN.IMAGE_SIZE = 640
 _CN.DTYPE = "float32"
-_CN.PRETRAINED_PATH = None
+_CN.PRETRAINED_PATH = "logs/tb_logs/MegaDepth_640_(0, 1, 1)_0_M2/version_0/checkpoints/last.ckpt"
 
 ########    Device Configurations    ########
 # Support CUDA/CPU only!!!
 _CN.DEVICE = CN()
 _CN.DEVICE.ENABLE_GPU = True        # Whether enable GPUs, default true
 _CN.DEVICE.ENABLE_DDP = True        # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "0,2,3,4,5,6"  # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.GPU_IDX = "0,3,4,5,6,7"  # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
@@ -81,7 +81,7 @@ _CN.TRAINER.SCALING = None                          # this will be calculated au
 _CN.TRAINER.FIND_LR = True                          # use learning rate finder from pytorch-lightning
 # optimizer
 _CN.TRAINER.OPTIMIZER = "AdamW"                     # options: [Adam, AdamW]
-_CN.TRAINER.TRUE_LR = 2e-3                          # using LR finder provided by pytorch lightning
+_CN.TRAINER.TRUE_LR = 9e-2                          # using LR finder provided by pytorch lightning
 _CN.TRAINER.ADAM_DECAY = 0.1
 _CN.TRAINER.ADAMW_DECAY = 0.1
 # learning rate scheduler
@@ -115,21 +115,21 @@ _CN.MODEL.DEBUG = _CN.DEBUG
 _CN.MODEL.DTYPE = _CN.DTYPE
 _CN.MODEL.FUSION_TYPE = "mamba"                     # options: ["mamba", "transformer"]
 _CN.MODEL.SCALES_SELECTION = (0, 1, 1)              # E.g. if BACKBONE.RESOLUTION = (2, 4, 8), SCALES_SELECTION = (0, 1, 1), means only 1/4 and 1/8 feature maps are selected for feature fusion
-_CN.MODEL.COARSE_SCALE_IDX = 1
+_CN.MODEL.COARSE_SCALE_IDX = 0
 _CN.MODEL.COARSE_SCALE = None                       # Will be calculated automatically
 # Feature Backbone
 _CN.MODEL.BACKBONE = CN()
-_CN.MODEL.BACKBONE.BACKBONE_TYPE = "ResNet18"       # options: ["ResNet18"]
-_CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)           # options: [(2, 4, 8), (2, 4, 8, 16)] for ResNet18
-_CN.MODEL.BACKBONE.LAYER_DIMS = (128, 196, 256)     # options: [(128, 196, 256)(Modified by LoFTR), (64, 128, 256, 512)] for ResNet18
+_CN.MODEL.BACKBONE.BACKBONE_TYPE = "ResNet18"               # options: ["ResNet18", "ResNet18_modified"]
+_CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)                   # options: [(2, 4, 8), (2, 4, 8, 16)] for ResNet18
+_CN.MODEL.BACKBONE.LAYER_DIMS = (128, 196, 256)             # options: [(128, 196, 256)(Modified by LoFTR), (64, 128, 256, 512)] for ResNet18
 _CN.MODEL.BACKBONE.INPUT_SIZE = _CN.IMAGE_SIZE
 # Mamba Feature Fusion
 _CN.MODEL.MAMBA_FUSION = CN()
 _CN.MODEL.MAMBA_FUSION.USING_MAMBA2 = True          # Whether using mamba2 or not
 _CN.MODEL.MAMBA_FUSION.INNER_EXPANSION = 2          # Inner dimension expansion rate for mamba, inner dimension=rate*input dimension
-_CN.MODEL.MAMBA_FUSION.CONV_DIM = 4                 # Conv dimension for mamba
+_CN.MODEL.MAMBA_FUSION.CONV_DIM = 2                 # Conv dimension for mamba
 _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER = 0           # number of "self attn." layer
-_CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER = 4          # number of "cross attn." layer
+_CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER = 2          # number of "cross attn." layer
 _CN.MODEL.MAMBA_FUSION.LAYER_TYPES = ["self"] * _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER + \
                                      ["cross"] * _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER
 # Transformer Feature Fusion (comparison)
@@ -139,6 +139,9 @@ _CN.MODEL.TRANSFORMER_FUSION.NHEAD = 8
 _CN.MODEL.TRANSFORMER_FUSION.ATTENTION = "linear"
 _CN.MODEL.TRANSFORMER_FUSION.LAYERS = 1             # number of self+cross attn. layer
 _CN.MODEL.TRANSFORMER_FUSION.LAYER_TYPES = ['self', 'cross'] * _CN.MODEL.TRANSFORMER_FUSION.LAYERS
+# Fine matching
+_CN.MODEL.FINE_MATCHING = CN()
+_CN.MODEL.FINE_MATCHING.WINDOW_SIZE = 3
 
 
 ########    Loss Configurations    ########

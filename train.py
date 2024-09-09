@@ -20,7 +20,7 @@ loguru_logger = get_rank_zero_only_logger(loguru_logger)
 
 
 def main():
-    torch.set_float32_matmul_precision('medium')
+    torch.set_float32_matmul_precision('high')
     # get configurations
     config: CN = get_cfg_defaults()
     pl.seed_everything(config.GLOBAL_SEED)
@@ -87,10 +87,16 @@ def main():
     )
     loguru_logger.info("Trainer Initialized!")
     
-    # # Finding best LR
+    # # Finding best LR with linear progression
     # tuner = Tuner(trainer)
-    # lr_finder = tuner.lr_find(model=model, datamodule=data_module)
-    # print(f"Best LR found by LR finder :{lr_finder.suggestion()}")
+    # lr_finder = tuner.lr_find(
+    #     model=model, 
+    #     datamodule=data_module, 
+    #     mode="linear", 
+    #     max_lr=1e-1, 
+    #     num_training=300,
+    # )
+    # print(f"Best LR found by LR finder with linear progression :{lr_finder.suggestion()}")
     
     # # Setting best LR
     # model.lr = lr_finder.suggestion()

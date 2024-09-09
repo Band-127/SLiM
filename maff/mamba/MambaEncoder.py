@@ -186,7 +186,7 @@ class ConcatMambaLayer(nn.Module):
         # vanilla Mamba builder
         self.mamba_base = Mamba2 if self.using_mamba2 else Mamba
 
-        self.mamba_layer = self.mamba_base(
+        self.mamba_layer_forward = self.mamba_base(
             d_model=in_output_dim,
             d_state=64 if self.using_mamba2 else 16,
             d_conv=4 if self.conv_dim is None else self.conv_dim,
@@ -194,6 +194,18 @@ class ConcatMambaLayer(nn.Module):
             device=self.device,
             dtype=self.dtype,
         )
+        
+        self.mamba_layer_backward = self.mamba_base(
+            d_model=in_output_dim,
+            d_state=64 if self.using_mamba2 else 16,
+            d_conv=4 if self.conv_dim is None else self.conv_dim,
+            expand=inner_expansion,
+            device=self.device,
+            dtype=self.dtype,
+        )
+        
+        # LayerNorm
+        self.layer_norm = nn.LayerNorm(in_output_dim)
 
     def forward(
         self, x1: torch.Tensor, x2: torch.Tensor
@@ -215,14 +227,19 @@ class ConcatMambaLayer(nn.Module):
         xb = xf.flip(dims=(-2,))
 
         # 2. Enter mamba layer
-        xf = self.mamba_layer(xf)
-        xb = self.mamba_layer(xb)
-
-        # 3. Fuse both scanning direction into one and restore into two features
+        xf = self.mamba_layer_forward(xf)
+        xb = self.mamba_layer_backward(xb)
+        
+        # 3. Fuse
         x = 0.5 * (xf + xb.flip(dims=(-2,)))
+        
+        # 4. Apply LayerNorm
+        x = self.layer_norm(x)
+
+        # 5. Restore into two features
         L1 = x1.shape[-2]
-        x1 = x[:, 0:L1, :]
-        x2 = x[:, L1:, :]
+        x1 = x[:, 0:L1, :] + x1     # Residual connections
+        x2 = x[:, L1:, :] + x2      # Residual connections
 
         return x1, x2
 
