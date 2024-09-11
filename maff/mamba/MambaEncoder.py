@@ -105,7 +105,7 @@ class DualInputMambaLayer(nn.Module):
 
         self.mamba_layer = self.mamba_base(
             d_model=in_output_dim,
-            d_state=64 if self.using_mamba2 else 16,
+            d_state=16 if self.using_mamba2 else 8,
             d_conv=4 if self.conv_dim is None else self.conv_dim,
             expand=inner_expansion,
             device=self.device,
@@ -188,7 +188,7 @@ class ConcatMambaLayer(nn.Module):
 
         self.mamba_layer_forward = self.mamba_base(
             d_model=in_output_dim,
-            d_state=64 if self.using_mamba2 else 16,
+            d_state=16 if self.using_mamba2 else 8,
             d_conv=4 if self.conv_dim is None else self.conv_dim,
             expand=inner_expansion,
             device=self.device,
@@ -197,7 +197,7 @@ class ConcatMambaLayer(nn.Module):
         
         self.mamba_layer_backward = self.mamba_base(
             d_model=in_output_dim,
-            d_state=64 if self.using_mamba2 else 16,
+            d_state=16 if self.using_mamba2 else 8,
             d_conv=4 if self.conv_dim is None else self.conv_dim,
             expand=inner_expansion,
             device=self.device,

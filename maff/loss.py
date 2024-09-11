@@ -50,12 +50,12 @@ class MAFF_Loss(nn.Module):
 
         # Focal Loss
         elif self.config["COARSE_TYPE"] == "focal":
-            conf = torch.clamp(conf, 1e-6, 1 - 1e-6)
+            # conf = torch.clamp(conf, 1e-6, 1 - 1e-6)
             alpha = self.config["FOCAL_ALPHA"]
             gamma = self.config["FOCAL_GAMMA"]
 
             pos_conf = conf[pos_mask]
-            loss_pos = - alpha * torch.pow(1 - pos_conf, gamma) * pos_conf.log()
+            loss_pos = - alpha * torch.pow(1 - pos_conf, gamma) * torch.clamp_min(pos_conf, 1e-6).log()
 
             # handle loss weights
             if weight is not None:
@@ -100,7 +100,7 @@ class MAFF_Loss(nn.Module):
         sim_matrix = data["sim_matrix"]
         conf_matrix = F.softmax(sim_matrix, 1) * F.softmax(sim_matrix, 2)
         data.update({"conf_matrix": conf_matrix})
-        
+
         loss_c = self.compute_coarse_loss(
             data["conf_matrix"],
             data["conf_matrix_gt"],
@@ -108,8 +108,8 @@ class MAFF_Loss(nn.Module):
         )
         loss: torch.Tensor = loss_c * self.config["COARSE_WEIGHT"]
         loss_scalars.update({"loss_c": loss.clone().detach().cpu()})
-        
+
         # 2. Fine-level loss
-        
+
         # 3. Total loss
         data.update({"loss": loss, "loss_scalars": loss_scalars})

@@ -1,12 +1,7 @@
 import math
 import torch
-from pathlib import Path
 from yacs.config import CfgNode as CN
 import pytorch_lightning as pl
-from pytorch_lightning.tuner.tuning import Tuner
-from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from pytorch_lightning.strategies import DDPStrategy
 from loguru import logger as loguru_logger
 
 from utils.profiler import build_profiler
@@ -17,16 +12,16 @@ from datasets.overall_dataset import MAFF_Dataset
 
 # get logger and set as rank zero only(means ony info from rank 1 gpu will be stated out)
 loguru_logger = get_rank_zero_only_logger(loguru_logger)
-# get configurations
-config: CN = get_cfg_defaults()
-pl.seed_everything(config.GLOBAL_SEED)
 
 
 def main():
     torch.set_float32_matmul_precision("high")
+    # get configurations
+    config: CN = get_cfg_defaults()
+    pl.seed_everything(config.GLOBAL_SEED)
 
     # set train/test
-    config.OVERALL_MODE = "train"
+    config.OVERALL_MODE = "test"
 
     # setup exact gpus available and set CUDA_VISIBLE_DEVICES variable
     n_gpu_available = (
@@ -49,7 +44,10 @@ def main():
 
     # Lightning module
     model = PL_MAFF(
-        config=config, pretrained_ckpt=config.PRETRAINED_PATH, profiler=profiler
+        config=config,
+        pretrained_ckpt=config.PRETRAINED_PATH,
+        profiler=profiler,
+        dump_dir=config.DUMP_DIR,
     )
     loguru_logger.info("MAFF Lightning Module initialized!")
 
@@ -57,58 +55,19 @@ def main():
     data_module = MAFF_Dataset(config=config)
     loguru_logger.info("MAFF Data Module initialized!")
 
-    # TensorBoard Logger
-    logger = TensorBoardLogger(
-        save_dir="logs/tb_logs", name=config.LOGGER.LOGGER_NAME, default_hp_metric=False
-    )
-    ckpt_dir = Path(logger.log_dir) / "checkpoints"
-
-    # Callbacks
-    ckpt_callback = ModelCheckpoint(
-        monitor="auc@10",
-        verbose=True,
-        save_top_k=5,
-        mode="max",
-        save_last=True,
-        dirpath=str(ckpt_dir),
-        filename="{epoch}-{auc@5:.3f}-{auc@10:.3f}-{auc@20:.3f}",
-    )
-    lr_monitor = LearningRateMonitor(logging_interval="step")
-    callbacks = [ckpt_callback, lr_monitor]
-
     # Torch Lightning Trainer
     trainer = pl.Trainer(
         accelerator="gpu" if config.DEVICE.ENABLE_GPU else "cpu",
-        strategy=DDPStrategy(find_unused_parameters=True)
-        if config.DEVICE.ENABLE_DDP
-        else "auto",
         devices=n_gpu_available,
         num_nodes=config.DEVICE.NUM_NODES,
-        logger=logger,
-        callbacks=callbacks,
-        gradient_clip_val=config.TRAINER.GRADIENT_CLIPPING,
-        sync_batchnorm=(config.TRAINER.WORLD_SIZE > 0),
         profiler=profiler,
+        logger=False,
     )
     loguru_logger.info("Trainer Initialized!")
 
-    # # Finding best LR with linear progression
-    # tuner = Tuner(trainer)
-    # lr_finder = tuner.lr_find(
-    #     model=model,
-    #     datamodule=data_module,
-    #     mode="linear",
-    #     max_lr=1e-1,
-    #     num_training=300,
-    # )
-    # print(f"Best LR found by LR finder with linear progression :{lr_finder.suggestion()}")
-
-    # # Setting best LR
-    # model.lr = lr_finder.suggestion()
-
-    # Training
-    loguru_logger.info("Start training!")
-    trainer.fit(model, datamodule=data_module)
+    # Testing
+    loguru_logger.info("Start testing!")
+    trainer.test(model, datamodule=data_module)
 
 
 if __name__ == "__main__":

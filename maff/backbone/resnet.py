@@ -68,10 +68,10 @@ class ResNet18_2_4_8(nn.Module):
         self.layer1 = self._make_layer(block, block_dims[0], stride=1)  # 1/2
         self.layer2 = self._make_layer(block, block_dims[1], stride=2)  # 1/4
         self.layer3 = self._make_layer(block, block_dims[2], stride=2)  # 1/8
-        
+
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)

@@ -10,14 +10,15 @@ _CN.OVERALL_MODE = "train"          # options: ["train", "test"]
 _CN.GLOBAL_SEED = None              # for reproducibility, None for random
 _CN.IMAGE_SIZE = 640
 _CN.DTYPE = "float32"
-_CN.PRETRAINED_PATH = "logs/tb_logs/MegaDepth_640_(0, 1, 1)_0_M2/version_0/checkpoints/last.ckpt"
+_CN.PRETRAINED_PATH = None
+_CN.DUMP_DIR = "dump/maff_baseline_outdoor"
 
 ########    Device Configurations    ########
 # Support CUDA/CPU only!!!
 _CN.DEVICE = CN()
 _CN.DEVICE.ENABLE_GPU = True        # Whether enable GPUs, default true
 _CN.DEVICE.ENABLE_DDP = True        # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "0,3,4,5,6,7"  # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.GPU_IDX = "2,3,5,6,7"  # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
@@ -92,14 +93,17 @@ _CN.TRAINER.MSLR_GAMMA = 0.5
 _CN.TRAINER.COSA_TMAX = 30                          # COSA: CosineAnnealing
 _CN.TRAINER.ELR_GAMMA = 0.999992                    # ELR: ExponentialLR, this value for "step" interval
 # step-based warm-up
-_CN.TRAINER.WARMUP_TYPE = 'constant'                # options: [linear, constant]
+_CN.TRAINER.WARMUP_TYPE = 'linear'                  # options: [linear, constant]
 _CN.TRAINER.WARMUP_RATIO = 0.1
 _CN.TRAINER.WARMUP_STEP = 1875
 # plotting related
 _CN.TRAINER.ENABLE_PLOTTING = True
-_CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 32     # number of val/test paris for plotting
-_CN.TRAINER.PLOT_MODE = 'evaluation'  # ['evaluation', 'confidence']
+_CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 32                # number of val/test paris for plotting
+_CN.TRAINER.PLOT_MODE = 'evaluation'                # ['evaluation', 'confidence']
 _CN.TRAINER.PLOT_MATCHES_ALPHA = 'dynamic'
+# For metric calculation
+_CN.TRAINER.RANSAC_PIXEL_THR = 0.5
+_CN.TRAINER.RANSAC_CONF = 0.99999
 
 ########    Logging Configurations    ########
 _CN.LOGGER = CN()
@@ -119,19 +123,19 @@ _CN.MODEL.COARSE_SCALE_IDX = 0
 _CN.MODEL.COARSE_SCALE = None                       # Will be calculated automatically
 # Feature Backbone
 _CN.MODEL.BACKBONE = CN()
-_CN.MODEL.BACKBONE.BACKBONE_TYPE = "ResNet18"               # options: ["ResNet18", "ResNet18_modified"]
-_CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)                   # options: [(2, 4, 8), (2, 4, 8, 16)] for ResNet18
-_CN.MODEL.BACKBONE.LAYER_DIMS = (128, 196, 256)             # options: [(128, 196, 256)(Modified by LoFTR), (64, 128, 256, 512)] for ResNet18
+_CN.MODEL.BACKBONE.BACKBONE_TYPE = "ResNet18_modified"      # options: ["ResNet18", "ResNet18_modified"]
+_CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)                   # options: [(2, 4, 8), (2, 4, 8, 16)] for ResNet18, (2, 4, 8) for ResNet18_modified
+_CN.MODEL.BACKBONE.LAYER_DIMS = (128, 180, 256)             # options: [(128, 196, 256)(Modified by LoFTR), (64, 128, 256, 512)] for ResNet18
 _CN.MODEL.BACKBONE.INPUT_SIZE = _CN.IMAGE_SIZE
 # Mamba Feature Fusion
 _CN.MODEL.MAMBA_FUSION = CN()
 _CN.MODEL.MAMBA_FUSION.USING_MAMBA2 = True          # Whether using mamba2 or not
 _CN.MODEL.MAMBA_FUSION.INNER_EXPANSION = 2          # Inner dimension expansion rate for mamba, inner dimension=rate*input dimension
-_CN.MODEL.MAMBA_FUSION.CONV_DIM = 2                 # Conv dimension for mamba
+_CN.MODEL.MAMBA_FUSION.CONV_DIM = 3                 # Conv dimension for mamba
 _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER = 0           # number of "self attn." layer
 _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER = 2          # number of "cross attn." layer
 _CN.MODEL.MAMBA_FUSION.LAYER_TYPES = ["self"] * _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER + \
-                                     ["cross"] * _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER
+                                    ["cross"] * _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER
 # Transformer Feature Fusion (comparison)
 _CN.MODEL.TRANSFORMER_FUSION = CN()
 _CN.MODEL.TRANSFORMER_FUSION.D_MODEL = _CN.MODEL.BACKBONE.LAYER_DIMS[-1]
@@ -139,10 +143,12 @@ _CN.MODEL.TRANSFORMER_FUSION.NHEAD = 8
 _CN.MODEL.TRANSFORMER_FUSION.ATTENTION = "linear"
 _CN.MODEL.TRANSFORMER_FUSION.LAYERS = 1             # number of self+cross attn. layer
 _CN.MODEL.TRANSFORMER_FUSION.LAYER_TYPES = ['self', 'cross'] * _CN.MODEL.TRANSFORMER_FUSION.LAYERS
+# Coarse matching
+_CN.MODEL.COARSE_MATCHING = CN()
+_CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.8
 # Fine matching
 _CN.MODEL.FINE_MATCHING = CN()
 _CN.MODEL.FINE_MATCHING.WINDOW_SIZE = 3
-
 
 ########    Loss Configurations    ########
 _CN.LOSS = CN()
@@ -162,14 +168,14 @@ _CN.LOGGER = CN()
 _CN.LOGGER.LOGGER_NAME = (f"{_CN.DATASET.TRAINVAL_DATA_SOURCE}_{_CN.IMAGE_SIZE}_{_CN.MODEL.SCALES_SELECTION}_") + \
                         (f"{_CN.MODEL.COARSE_SCALE_IDX}_") + \
                         ("M" if _CN.MODEL.FUSION_TYPE == "mamba" else "T") + \
-                        ("2" if _CN.MODEL.MAMBA_FUSION.USING_MAMBA2 else "")
+                        ("2" if _CN.MODEL.MAMBA_FUSION.USING_MAMBA2 else "") + \
+                        (f"_{_CN.IMAGE_SIZE}") + \
+                        (f"_{_CN.DATASET.TRAINVAL_DATA_SOURCE}")
 
 # geometric metrics and pose solver
 _CN.TRAINER.EPI_ERR_THR = 5e-4  # recommendation: 5e-4 for ScanNet, 1e-4 for MegaDepth (from SuperGlue)
 _CN.TRAINER.POSE_GEO_MODEL = "E"  # ["E", "F", "H"]
 _CN.TRAINER.POSE_ESTIMATION_METHOD = "RANSAC"  # [RANSAC, DEGENSAC, MAGSAC]
-_CN.TRAINER.RANSAC_PIXEL_THR = 0.5
-_CN.TRAINER.RANSAC_CONF = 0.99999
 _CN.TRAINER.RANSAC_MAX_ITERS = 10000
 _CN.TRAINER.USE_MAGSACPP = False
 
@@ -182,7 +188,10 @@ def get_cfg_defaults():
 
         # speak out the random seed
         print("#"*64 + f"\nRandom seed: {_CN.GLOBAL_SEED}\n" + "#"*64)
-        
+
+    # print logger name
+    print(f"Logger name: {_CN.LOGGER.LOGGER_NAME}")
+
     # Calculate coarse scale
     reach = _CN.MODEL.COARSE_SCALE_IDX
     for idx, i in enumerate(_CN.MODEL.SCALES_SELECTION):
