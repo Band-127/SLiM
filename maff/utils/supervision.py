@@ -180,14 +180,14 @@ def spvs_fine(data, config):
     # 1. misc
     # w_pt0_i, pt1_i = data.pop('spv_w_pt0_i'), data.pop('spv_pt1_i')
     w_pt0_i, pt1_i = data["spv_w_pt0_i"], data["spv_pt1_i"]
-    scale = config["LOFTR"]["RESOLUTION"][1]
-    radius = config["LOFTR"]["FINE_WINDOW_SIZE"] // 2
+    radius = config["MODEL"]["FINE_MATCHING"]["WINDOW_SIZE"] // 2
 
     # 2. get coarse prediction
-    b_ids, i_ids, j_ids = data["b_ids"], data["i_ids"], data["j_ids"]
+    b_ids, i_ids, j_ids = data["b_idx_c"], data["i_idx_c"], data["j_idx_c"]
 
     # 3. compute gt
-    scale = scale * data["scale1"][b_ids] if "scale0" in data else scale
+    scale = data["hw0_i"][0] / data["hw0_c"][0]
+    scale = scale * data["scale1"][b_ids] if "scale1" in data else scale
     # `expec_f_gt` might exceed the window, i.e. abs(*) > 1, which would be filtered later
     expec_f_gt = (
         (w_pt0_i[b_ids, i_ids] - pt1_i[b_ids, j_ids]) / scale / radius

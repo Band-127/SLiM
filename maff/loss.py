@@ -16,6 +16,7 @@ class MAFF_Loss(nn.Module):
         # Positive & Negative weight
         self.c_pos_w = self.config["POS_WEIGHT"]
         self.c_neg_w = self.config["NEG_WEIGHT"]
+        self.correct_thr = self.config["FINE_THR"]
 
     def compute_coarse_loss(self, conf, conf_gt, weight=None):
         """Point-wise CE / Focal Loss with 0 / 1 confidence as gt.
@@ -55,7 +56,11 @@ class MAFF_Loss(nn.Module):
             gamma = self.config["FOCAL_GAMMA"]
 
             pos_conf = conf[pos_mask]
-            loss_pos = - alpha * torch.pow(1 - pos_conf, gamma) * torch.clamp_min(pos_conf, 1e-6).log()
+            loss_pos = (
+                -alpha
+                * torch.pow(1 - pos_conf, gamma)
+                * torch.clamp_min(pos_conf, 1e-6).log()
+            )
 
             # handle loss weights
             if weight is not None:
@@ -70,6 +75,41 @@ class MAFF_Loss(nn.Module):
             raise ValueError(
                 "Unknown coarse loss: {type}".format(type=self.config["coarse_type"])
             )
+
+    def _compute_fine_loss_l2_std(self, expec_f, expec_f_gt, std):
+        """
+        Args:
+            expec_f (torch.Tensor): [M, 2] <x, y>
+            expec_f_gt (torch.Tensor): [M, 2] <x, y>
+            std (torch.Tensor): [M]
+        """
+        # correct_mask tells you which pair to compute fine-loss
+        correct_mask = (
+            torch.linalg.norm(expec_f_gt, ord=float("inf"), dim=1) < self.correct_thr
+        )
+
+        # use std as weight that measures uncertainty
+        inverse_std = 1.0 / torch.clamp(std, min=1e-10)
+        weight = (
+            inverse_std / torch.mean(inverse_std)
+        ).detach()  # avoid minizing loss through increase std
+
+        # corner case: no correct coarse match found
+        if not correct_mask.any():
+            if (
+                self.training
+            ):  # this seldomly happen during training, since we pad prediction with gt
+                # sometimes there is not coarse-level gt at all.
+                correct_mask[0] = True
+                weight[0] = 0.0
+            else:
+                return None
+
+        # l2 loss with std
+        offset_l2 = ((expec_f_gt[correct_mask] - expec_f[correct_mask]) ** 2).sum(-1)
+        loss = (offset_l2 * weight[correct_mask]).mean()
+
+        return loss
 
     @torch.no_grad()
     def compute_c_weight(self, data):
@@ -110,6 +150,17 @@ class MAFF_Loss(nn.Module):
         loss_scalars.update({"loss_c": loss.clone().detach().cpu()})
 
         # 2. Fine-level loss
+        if self.config["FINE_WEIGHT"] is not None:
+            loss_f = self._compute_fine_loss_l2_std(
+                expec_f=data["expec_f"],
+                expec_f_gt=data["expec_f_gt"],
+                std=data["std"],
+            )
+            if loss_f is not None:
+                loss += loss_f * self.config["FINE_WEIGHT"]
+                loss_scalars.update({"loss_f": loss_f.clone().detach().cpu()})
+            else:
+                loss_scalars.update({"loss_f": torch.tensor(1.0).clone().detach().cpu()})
 
         # 3. Total loss
         data.update({"loss": loss, "loss_scalars": loss_scalars})

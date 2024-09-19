@@ -56,13 +56,6 @@ def setup_gpus(gpus: Union[str, int]) -> int:
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in gpu_ids)
         visible_devices = os.getenv("CUDA_VISIBLE_DEVICES")
-        logger.warning(
-            f"[Temporary Fix] manually set CUDA_VISIBLE_DEVICES when specifying gpus to use: {visible_devices}"
-        )
-    else:
-        logger.warning(
-            "[Temporary Fix] CUDA_VISIBLE_DEVICES already set by user or the main process."
-        )
     return len(gpu_ids)
 
 

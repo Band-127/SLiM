@@ -1,7 +1,7 @@
 import math
 import torch
 from pathlib import Path
-from yacs.config import CfgNode as CN
+import torch.distributed as dist
 import pytorch_lightning as pl
 from pytorch_lightning.tuner.tuning import Tuner
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -17,12 +17,34 @@ from datasets.overall_dataset import MAFF_Dataset
 
 # get logger and set as rank zero only(means ony info from rank 1 gpu will be stated out)
 loguru_logger = get_rank_zero_only_logger(loguru_logger)
-# get configurations
-config: CN = get_cfg_defaults()
-pl.seed_everything(config.GLOBAL_SEED)
+
+config = None
+
+
+def init_config():
+    global config
+    if config is None:
+        if dist.is_available() and dist.is_initialized():
+            rank = dist.get_rank()
+            if rank == 0:
+                config = get_cfg_defaults()
+                pl.seed_everything(config.GLOBAL_SEED)
+
+            config_list = [config]
+            dist.broadcast_object_list(config_list, src=0)
+            config = config_list[0]
+
+            dist.barrier()
+        else:
+            config = get_cfg_defaults()
+            pl.seed_everything(config.GLOBAL_SEED)
+    return config
 
 
 def main():
+    global config
+    config = init_config()
+
     torch.set_float32_matmul_precision("high")
 
     # set train/test
@@ -97,11 +119,10 @@ def main():
     # lr_finder = tuner.lr_find(
     #     model=model,
     #     datamodule=data_module,
-    #     mode="linear",
-    #     max_lr=1e-1,
-    #     num_training=300,
     # )
-    # print(f"Best LR found by LR finder with linear progression :{lr_finder.suggestion()}")
+    # print(
+    #     f"Best LR found by LR finder with linear progression :{lr_finder.suggestion()}"
+    # )
 
     # # Setting best LR
     # model.lr = lr_finder.suggestion()

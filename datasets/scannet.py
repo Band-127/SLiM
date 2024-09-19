@@ -71,9 +71,9 @@ class ScanNetDataset(utils.data.Dataset):
         img_name1 = osp.join(self.root_dir, scene_name, 'color', f'{stem_name_1}.jpg')
         
         # TODO: Support augmentation & handle seeds for each worker correctly.
-        image0 = read_scannet_gray(img_name0, resize=(640, 480), augment_fn=None)
+        image0 = read_scannet_gray(img_name0, resize=(640, 480), augment_fn=self.augment_fn)
                                 #    augment_fn=np.random.choice([self.augment_fn, None], p=[0.5, 0.5]))
-        image1 = read_scannet_gray(img_name1, resize=(640, 480), augment_fn=None)
+        image1 = read_scannet_gray(img_name1, resize=(640, 480), augment_fn=self.augment_fn)
                                 #    augment_fn=np.random.choice([self.augment_fn, None], p=[0.5, 0.5]))
 
         # read the depthmap which is stored as (480, 640)

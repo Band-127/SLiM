@@ -9,8 +9,9 @@ from torch.utils.data import (
 )
 import pytorch_lightning as pl
 
-from .megadepth import MegaDepthDataset
-from .sampler import RandomConcatSampler
+from datasets.megadepth import MegaDepthDataset
+from datasets.sampler import RandomConcatSampler
+from utils.augment import build_augmentor
 
 
 class MAFF_Dataset(pl.LightningDataModule):
@@ -54,6 +55,8 @@ class MAFF_Dataset(pl.LightningDataModule):
         self._train_dataloader = None
         self._val_dataloader = None
         self._test_dataloader = None
+        ## Augmentor
+        self.augmentor = build_augmentor(config.DATASET.AUGMENTATION_TYPE)
 
         # 2, Read all npz names stated in list
         if self.mode == "train":
@@ -104,6 +107,7 @@ class MAFF_Dataset(pl.LightningDataModule):
                             img_padding=self.megadepth_image_padding,
                             depth_padding=self.megadepth_depth_padding,
                             coarse_scale=self.megadepth_coarse_scale,
+                            augmentor=self.augmentor,
                         )
                     )
             self.train_dataset = ConcatDataset(datasets)

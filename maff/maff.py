@@ -6,6 +6,7 @@ from einops.einops import rearrange
 from typing import Sequence
 import kornia.geometry.subpix.dsnt as dsnt
 from kornia.utils.grid import create_meshgrid
+from typing import List
 
 from maff.backbone import build_backbone
 from maff.mamba.MambaEncoder import MambaEncoder
@@ -21,11 +22,13 @@ class MAFF(nn.Module):
         self.config = config
 
         self.dtype = torch.float32 if config["DTYPE"] == "float32" else "float64"
-        self.d_model = config["BACKBONE"]["LAYER_DIMS"][-1]
+        self.d_model = config["DIMENSION"]
         self.scales_selection = config["SCALES_SELECTION"]
         self.coarse_scale_idx = config["COARSE_SCALE_IDX"]
         self.coarse_match_thres = config["COARSE_MATCHING"]["THRESHOLD"]
         self.debug = config["DEBUG"]
+        self.high_semantic_first = config["HIGH_SEMANTIC_FIRST"]
+        self.quad_direction = config["QUAD_DIRECTION"]
 
         # 1. Pyramid feature backbone
         self.feature_backbone = build_backbone(config["BACKBONE"])
@@ -51,12 +54,13 @@ class MAFF(nn.Module):
                 dtype=self.dtype,
                 layer_types=config["MAMBA_FUSION"]["LAYER_TYPES"],
                 using_mamba2=config["MAMBA_FUSION"]["USING_MAMBA2"],
+                quad_direction=self.quad_direction,
             )
             if config["FUSION_TYPE"] == "mamba"
             else LocalFeatureTransformer(config=config["TRANSFORMER_FUSION"])
         )
 
-    def forward(self, data: dict, training: bool = True):
+    def forward(self, data: dict):
         """
         Forward function of MAFF
             data (dict): {
@@ -68,7 +72,6 @@ class MAFF(nn.Module):
 
         Args:
             data (dict): input data
-            training (bool, optional): Whether in training mode. Defaults to True.
         """
         data.update(
             {
@@ -125,8 +128,8 @@ class MAFF(nn.Module):
         x1 = new_x1
         data.update(
             {
-                "hw0_c": x0[0].shape[2:],
-                "hw1_c": x1[0].shape[2:],
+                "hw0_c": x0[self.coarse_scale_idx].shape[2:],
+                "hw1_c": x1[self.coarse_scale_idx].shape[2:],
             }
         )
         if self.debug:
@@ -134,33 +137,54 @@ class MAFF(nn.Module):
                 f"Step: Feature selection\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
             )
 
+        # Inverse feature sequence if high_semantic_first is True
+        if self.high_semantic_first:
+            x0, x1 = x0[::-1], x1[::-1]
+
         # 5. Flatten S x [B x C x H x W] -> [B x (HW) x (sum(C))]
-        x0, x1, x0_length, x1_length = self.flatten(x0, x1)
+        if self.quad_direction:
+            x0_hw, x0_wh, x1_hw, x1_wh, x0_length, x1_length, x0_shape, x1_shape = (
+                self.flatten_quad(x0, x1)
+            )
+        else:
+            x0, x1, x0_length, x1_length = self.flatten(x0, x1)
         if self.debug:
             print(
                 f"Step: Flatten features\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
             )
 
         # 6. Mamba
-        x0, x1 = self.fusion_encoder(x0, x1)
+        if self.quad_direction:
+            x0_hw, x1_hw, x0_wh, x1_wh = self.fusion_encoder(x0_hw, x1_hw, x0_wh, x1_wh)
+        else:
+            x0, x1 = self.fusion_encoder(x0, x1)
         if self.debug:
             print(
                 f"Step: Fusion encoder\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
             )
 
         # 7. Unflatten into S x [B x (HW) x C]
-        x0, x1 = self.unflatten(x0, x1, x0_length, x1_length)
+        if self.quad_direction:
+            x0, x1 = self.unflatten_quad(
+                x0_hw, x0_wh, x1_hw, x1_wh, x0_length, x1_length, x0_shape, x1_shape
+            )
+        else:
+            x0, x1 = self.unflatten(x0, x1, x0_length, x1_length)
         if self.debug:
             print(
                 f"Step: Unflatten features\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
             )
+
+        # Inverse back the feature sequence if high_semantic_first is True
+        if self.high_semantic_first:
+            x0, x1 = x0[::-1], x1[::-1]
 
         data.update(
             {"feat0_c": x0[self.coarse_scale_idx], "feat1_c": x1[self.coarse_scale_idx]}
         )
 
         # 8. Correlation / Feature Matching
-        self.feature_matching(data, data["feat0_c"], data["feat1_c"], mask0, mask1, training)
+        self.feature_matching(data, data["feat0_c"], data["feat1_c"], mask0, mask1)
 
     def flatten(self, x0: Sequence[torch.Tensor], x1: Sequence[torch.Tensor]):
         # [B x C x H x W] -> [B x (HW) x C]
@@ -177,6 +201,34 @@ class MAFF(nn.Module):
 
         return x0, x1, x0_length, x1_length
 
+    def flatten_quad(self, x0: Sequence[torch.Tensor], x1: Sequence[torch.Tensor]):
+        # [B x C x H x W] -> [B x (HW) x C], [B x (WH) x C]
+        x0_hw = []
+        x0_wh = []
+        x1_hw = []
+        x1_wh = []
+        x0_shape = []
+        x1_shape = []
+        for i, scale in enumerate(x0):
+            x0_shape.append(scale.shape[2:])
+            x0_hw.append(rearrange(scale, "b c h w -> b (h w) c"))
+            x0_wh.append(rearrange(scale, "b c h w -> b (w h) c"))
+        for i, scale in enumerate(x1):
+            x1_shape.append(scale.shape[2:])
+            x1_hw.append(rearrange(scale, "b c h w -> b (h w) c"))
+            x1_wh.append(rearrange(scale, "b c h w -> b (w h) c"))
+
+        # S x [B x (HW) x C], [B x (WH) x C] -> [B x (HW) x (sum(C))]
+        x0_length = [i.shape[1] for i in x0_hw]
+        x1_length = [i.shape[1] for i in x1_hw]
+
+        x0_hw = torch.concat(x0_hw, dim=1)
+        x0_wh = torch.concat(x0_wh, dim=1)
+        x1_hw = torch.concat(x1_hw, dim=1)
+        x1_wh = torch.concat(x1_wh, dim=1)
+
+        return x0_hw, x0_wh, x1_hw, x1_wh, x0_length, x1_length, x0_shape, x1_shape
+
     def unflatten(
         self,
         x0: torch.Tensor,
@@ -190,6 +242,55 @@ class MAFF(nn.Module):
 
         return x0, x1
 
+    def unflatten_quad(
+        self,
+        x0_hw: torch.Tensor,
+        x0_wh: torch.Tensor,
+        x1_hw: torch.Tensor,
+        x1_wh: torch.Tensor,
+        x0_length: torch.Size,
+        x1_length: torch.Size,
+        x0_shape: List[torch.Size],
+        x1_shape: List[torch.Size],
+    ):
+        # [B x (HW) x (sum(C))] -> S x [B x (HW) x C], S x [B x (WH) x C]
+        x0_hw = torch.split(x0_hw, split_size_or_sections=x0_length, dim=1)
+        x0_wh = torch.split(x0_wh, split_size_or_sections=x0_length, dim=1)
+        x1_hw = torch.split(x1_hw, split_size_or_sections=x1_length, dim=1)
+        x1_wh = torch.split(x1_wh, split_size_or_sections=x1_length, dim=1)
+
+        # [B x (HW) x C], [B x (WH) x C] -> [B x H x W x C]
+        x0 = []
+        x1 = []
+        for i in range(len(x0_hw)):
+            x0.append(
+                0.5
+                * (
+                    x0_hw[i]
+                    + rearrange(
+                        x0_wh[i],
+                        "b (w h) c -> b (h w) c",
+                        h=x0_shape[i][0],
+                        w=x0_shape[i][1],
+                    )
+                )
+            )
+        for i in range(len(x1_hw)):
+            x1.append(
+                0.5
+                * (
+                    x1_hw[i]
+                    + rearrange(
+                        x1_wh[i],
+                        "b (w h) c -> b (h w) c",
+                        h=x1_shape[i][0],
+                        w=x1_shape[i][1],
+                    )
+                )
+            )
+
+        return x0, x1
+
     def feature_matching(
         self,
         data: dict,
@@ -197,7 +298,6 @@ class MAFF(nn.Module):
         x1: torch.Tensor,
         mask1: torch.Tensor = None,
         mask2: torch.Tensor = None,
-        training: bool = True,
     ):
         """
         Feature Matching using full correlation, and getting the coordinate of the best match
@@ -208,7 +308,6 @@ class MAFF(nn.Module):
             x1 (torch.Tensor): [B, L1, C]
             mask1 (torch.Tensor, optional): [B, L0]. Defaults to None.
             mask2 (torch.Tensor, optional): [B, L1]. Defaults to None.
-            training (bool, optional): Whether in training mode. Defaults to True.
         """
         # 1. Full Correlation
         # Normalize
@@ -230,28 +329,29 @@ class MAFF(nn.Module):
                 f"Step: Full Correlation\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
             )
 
-        if not training:
-            # 2. Get coarse coordinates
-            self.get_coarse_coord(data=data)
-            if self.debug:
-                print(
-                    f"Step: Get coarse coordinates\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
-                )
+        # 2. Get coarse coordinates
+        self.get_coarse_coord(data=data)
+        if self.debug:
+            print(
+                f"Step: Get coarse coordinates\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
+            )
 
-            # 3. Fine Matching
-            self.fine_matching(data=data)
-            if self.debug:
-                print(
-                    f"Step: Fine Matching\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
-                )
+        # 3. Fine Matching
+        self.fine_matching(data=data)
+        if self.debug:
+            print(
+                f"Step: Fine Matching\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
+            )
 
     @torch.no_grad()
     def get_coarse_coord(self, data: dict):
         sim_matrix = data["sim_matrix"]
-        # Get coarse matches > threshold, not using dual softmax (reference to Efficient LoFTR)
+        # Get coarse matches > threshold, using dual softmax
+        conf_matrix = F.softmax(sim_matrix, 1) * F.softmax(sim_matrix, 2)
         coarse_match = torch.argwhere(
-            sim_matrix / sim_matrix.max() > self.coarse_match_thres
+            conf_matrix / conf_matrix.max() > self.coarse_match_thres
         )  # M, 3(B, I, J)
+        del conf_matrix
 
         b_idx_c = coarse_match[:, 0]
         i_idx_c = coarse_match[:, 1]
@@ -260,6 +360,8 @@ class MAFF(nn.Module):
 
         # Match indices -> coordinates
         scale = data["hw0_i"][0] / data["hw0_c"][0]
+        scale0 = scale * data["scale0"][b_idx_c] if "scale0" in data else scale
+        scale1 = scale * data["scale1"][b_idx_c] if "scale1" in data else scale
         coarse_coord_0 = (
             torch.stack(
                 (
@@ -268,7 +370,7 @@ class MAFF(nn.Module):
                 ),
                 dim=1,
             )
-            * scale
+            * scale0
         )
         coarse_coord_1 = (
             torch.stack(
@@ -278,7 +380,7 @@ class MAFF(nn.Module):
                 ),
                 dim=1,
             )
-            * scale
+            * scale1
         )
 
         data.update(
@@ -291,7 +393,6 @@ class MAFF(nn.Module):
             }
         )
 
-    @torch.no_grad()
     def fine_matching(self, data: dict):
         feat0 = data["feat0_c"]
         feat1 = data["feat1_c"]
@@ -303,23 +404,25 @@ class MAFF(nn.Module):
         C = feat0.shape[-1]
         window_size = self.config.FINE_MATCHING.WINDOW_SIZE  # window size
 
+        # no coarse match
         if b_idx_c.shape[0] == 0:
-            data.update(
-                {
-                    "fine_coord_0": torch.zeros(
-                        size=(0, 2), dtype=torch.float32, device=feat0.device
-                    ),
-                    "fine_coord_1": torch.zeros(
-                        size=(0, 2), dtype=torch.float32, device=feat0.device
-                    ),
-                    "conf_map": torch.zeros(
-                        size=(0, 3, 3), dtype=torch.float32, device=feat0.device
-                    ),
-                    "std": torch.zeros(
-                        size=(0, 1), dtype=torch.float32, device=feat0.device
-                    ),
-                }
-            )
+            with torch.no_grad():
+                data.update(
+                    {
+                        "fine_coord_0": torch.zeros(
+                            size=(0, 2), dtype=torch.float32, device=feat0.device
+                        ),
+                        "fine_coord_1": torch.zeros(
+                            size=(0, 2), dtype=torch.float32, device=feat0.device
+                        ),
+                        "conf_map": torch.zeros(
+                            size=(0, 3, 3), dtype=torch.float32, device=feat0.device
+                        ),
+                        "std": torch.zeros(
+                            size=(0, 1), dtype=torch.float32, device=feat0.device
+                        ),
+                    }
+                )
             return
 
         # 1. Pick feature from coarse feature map x0 using coarse match
@@ -344,7 +447,6 @@ class MAFF(nn.Module):
 
         # 3. Correlation between both feature
         window_heatmap = torch.einsum("mc,mchw->mhw", feat0_picked, feat1_window_picked)
-        conf_map = window_heatmap.detach().clone()
         window_heatmap = torch.softmax(window_heatmap / (C**0.5), dim=1)
         if self.debug:
             print(
@@ -352,9 +454,7 @@ class MAFF(nn.Module):
             )
 
         # 4. Compute coordinates from heatmap
-        coords_normalized = dsnt.spatial_expectation2d(window_heatmap[None], True)[
-            0
-        ]  # M, 2
+        coords_normalized = dsnt.spatial_expectation2d(window_heatmap[None], True)[0]
         grid_normalized = create_meshgrid(
             window_size, window_size, True, window_heatmap.device
         ).reshape(1, -1, 2)  # [1, WW, 2]
@@ -365,7 +465,8 @@ class MAFF(nn.Module):
 
         # 5. Compute absolute coordinates, (coarse coor + fine coor) * scale
         fine_coord_0 = data["coarse_coord_0"]
-        fine_coord_1 = (coords_normalized * (window_size // 2) * scale) + data[
+        scale1 = scale * data["scale1"][data["b_idx_c"]] if "scale0" in data else scale
+        fine_coord_1 = (coords_normalized * (window_size // 2) * scale1) + data[
             "coarse_coord_1"
         ]
         if self.debug:
@@ -393,7 +494,7 @@ class MAFF(nn.Module):
             {
                 "fine_coord_0": fine_coord_0,
                 "fine_coord_1": fine_coord_1,
-                "conf_map": conf_map,
+                "expec_f": coords_normalized,
                 "std": std,
             }
         )

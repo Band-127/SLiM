@@ -144,6 +144,54 @@ class DualInputMambaLayer(nn.Module):
         return x1, x2
 
 
+class QuadDualInputMambaLayer(nn.Module):
+    def __init__(
+        self,
+        in_output_dim: int = 1024,
+        inner_expansion: float = 2.0,
+        conv_dim: int = 4,
+        device: torch.device = None,
+        dtype: torch.dtype = None,
+        using_mamba2: bool = False,
+    ):
+        super(QuadDualInputMambaLayer, self).__init__()
+        self.in_output_dim = in_output_dim
+        self.inner_expansion = inner_expansion
+        self.conv_dim = conv_dim
+        self.device = device
+        self.dtype = dtype
+        self.using_mamba2 = using_mamba2
+
+        self.mamba_layer_hw = ConcatMambaLayer(
+            in_output_dim=self.in_output_dim,
+            inner_expansion=self.inner_expansion,
+            conv_dim=self.conv_dim,
+            device=self.device,
+            dtype=self.dtype,
+            using_mamba2=self.using_mamba2,
+        )
+
+        self.mamba_layer_wh = ConcatMambaLayer(
+            in_output_dim=self.in_output_dim,
+            inner_expansion=self.inner_expansion,
+            conv_dim=self.conv_dim,
+            device=self.device,
+            dtype=self.dtype,
+            using_mamba2=self.using_mamba2,
+        )
+
+    def forward(
+        self,
+        x0_hw: torch.Tensor,
+        x1_hw: torch.Tensor,
+        x0_wh: torch.Tensor,
+        x1_wh: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        x0_hw, x1_hw = self.mamba_layer_hw(x0_hw, x1_hw)
+        x0_wh, x1_wh = self.mamba_layer_wh(x0_wh, x1_wh)
+        return x0_hw, x1_hw, x0_wh, x1_wh
+
+
 class ConcatMambaLayer(nn.Module):
     def __init__(
         self,
@@ -194,7 +242,7 @@ class ConcatMambaLayer(nn.Module):
             device=self.device,
             dtype=self.dtype,
         )
-        
+
         self.mamba_layer_backward = self.mamba_base(
             d_model=in_output_dim,
             d_state=16 if self.using_mamba2 else 8,
@@ -203,7 +251,7 @@ class ConcatMambaLayer(nn.Module):
             device=self.device,
             dtype=self.dtype,
         )
-        
+
         # LayerNorm
         self.layer_norm = nn.LayerNorm(in_output_dim)
 
@@ -229,19 +277,69 @@ class ConcatMambaLayer(nn.Module):
         # 2. Enter mamba layer
         xf = self.mamba_layer_forward(xf)
         xb = self.mamba_layer_backward(xb)
-        
+
         # 3. Fuse
         x = 0.5 * (xf + xb.flip(dims=(-2,)))
-        
+
         # 4. Apply LayerNorm
         x = self.layer_norm(x)
 
         # 5. Restore into two features
         L1 = x1.shape[-2]
-        x1 = x[:, 0:L1, :] + x1     # Residual connections
-        x2 = x[:, L1:, :] + x2      # Residual connections
+        x1 = x[:, 0:L1, :] + x1  # Residual connections
+        x2 = x[:, L1:, :] + x2  # Residual connections
 
         return x1, x2
+
+
+class QuadConcatMambaLayer(nn.Module):
+    def __init__(
+        self,
+        in_output_dim: int = 1024,
+        inner_expansion: float = 2.0,
+        conv_dim: int = 4,
+        device: torch.device = None,
+        dtype: torch.dtype = None,
+        using_mamba2: bool = False,
+    ):
+        super(QuadConcatMambaLayer, self).__init__()
+
+        self.in_output_dim: int = in_output_dim
+        self.inner_expansion: float = inner_expansion
+        self.conv_dim: int = conv_dim
+        self.device: torch.device = device
+        self.dtype: torch.dtype = dtype
+        self.using_mamba2: bool = using_mamba2
+
+        # Two ConcatMambaLayer
+        self.layer_hw = ConcatMambaLayer(
+            in_output_dim=self.in_output_dim,
+            inner_expansion=self.inner_expansion,
+            conv_dim=self.conv_dim,
+            device=self.device,
+            dtype=self.dtype,
+            using_mamba2=self.using_mamba2,
+        )
+        self.layer_wh = ConcatMambaLayer(
+            in_output_dim=self.in_output_dim,
+            inner_expansion=self.inner_expansion,
+            conv_dim=self.conv_dim,
+            device=self.device,
+            dtype=self.dtype,
+            using_mamba2=self.using_mamba2,
+        )
+
+    def forward(
+        self,
+        x0_hw: torch.Tensor,
+        x1_hw: torch.Tensor,
+        x0_wh: torch.Tensor,
+        x1_wh: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        x0_hw, x1_hw = self.layer_hw(x0_hw, x1_hw)
+        x0_wh, x1_wh = self.layer_wh(x0_wh, x1_wh)
+
+        return x0_hw, x1_hw, x0_wh, x1_wh
 
 
 class MambaEncoder(nn.Module):
@@ -254,6 +352,7 @@ class MambaEncoder(nn.Module):
         dtype: torch.dtype = None,
         using_mamba2: bool = False,
         layer_types: Sequence[str] = ["self", "cross"],
+        quad_direction: bool = False,
     ):
         """
         Default constructor for MambaEncoder using "self attn." mamba layer and "cross attn." mamba layer.
@@ -285,26 +384,50 @@ class MambaEncoder(nn.Module):
         self.dtype: torch.dtype = dtype
         self.using_mamba2: bool = using_mamba2
         self.layer_types: Sequence[str] = layer_types
+        self.quad_direction: bool = quad_direction
 
-        def self_encoding_layer_builder():
-            return DualInputMambaLayer(
-                in_output_dim=self.in_output_dim,
-                inner_expansion=self.inner_expansion,
-                conv_dim=self.conv_dim,
-                device=self.device,
-                dtype=self.dtype,
-                using_mamba2=self.using_mamba2,
-            )
+        if self.quad_direction:
 
-        def cross_encoding_layer_builder():
-            return ConcatMambaLayer(
-                in_output_dim=self.in_output_dim,
-                inner_expansion=self.inner_expansion,
-                conv_dim=self.conv_dim,
-                device=self.device,
-                dtype=self.dtype,
-                using_mamba2=self.using_mamba2,
-            )
+            def self_encoding_layer_builder():
+                return QuadDualInputMambaLayer(
+                    in_output_dim=self.in_output_dim,
+                    inner_expansion=self.inner_expansion,
+                    conv_dim=self.conv_dim,
+                    device=self.device,
+                    dtype=self.dtype,
+                    using_mamba2=self.using_mamba2,
+                )
+
+            def cross_encoding_layer_builder():
+                return QuadConcatMambaLayer(
+                    in_output_dim=self.in_output_dim,
+                    inner_expansion=self.inner_expansion,
+                    conv_dim=self.conv_dim,
+                    device=self.device,
+                    dtype=self.dtype,
+                    using_mamba2=self.using_mamba2,
+                )
+        else:
+
+            def self_encoding_layer_builder():
+                return DualInputMambaLayer(
+                    in_output_dim=self.in_output_dim,
+                    inner_expansion=self.inner_expansion,
+                    conv_dim=self.conv_dim,
+                    device=self.device,
+                    dtype=self.dtype,
+                    using_mamba2=self.using_mamba2,
+                )
+
+            def cross_encoding_layer_builder():
+                return ConcatMambaLayer(
+                    in_output_dim=self.in_output_dim,
+                    inner_expansion=self.inner_expansion,
+                    conv_dim=self.conv_dim,
+                    device=self.device,
+                    dtype=self.dtype,
+                    using_mamba2=self.using_mamba2,
+                )
 
         self.layers = []
         for layer_type in self.layer_types:
@@ -316,20 +439,46 @@ class MambaEncoder(nn.Module):
         self.layers = nn.ModuleList(self.layers)
 
     def forward(
-        self, x1: torch.Tensor, x2: torch.Tensor
+        self,
+        x0: torch.Tensor,
+        x1: torch.Tensor,
+        x0_wh: torch.Tensor = None,
+        x1_wh: torch.Tensor = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward function for MambaEncoder, using bidirectional scan.
         Args:
-            x1 (torch.Tensor): input tensor 1(Batch, Sequence, Dimension)
-            x2 (torch.Tensor): input tensor 2(Batch, Sequence, Dimension)
-
+            x0 (torch.Tensor): input tensor 0(Batch, Sequence, Dimension), alias to x0_hw in quad mode
+            x1 (torch.Tensor): input tensor 1(Batch, Sequence, Dimension), alias to x1_hw in quad mode
+            x0_wh (torch.Tensor): input tensor 0(Batch, Sequence, Dimension)
+            x1_wh (torch.Tensor): input tensor 1(Batch, Sequence, Dimension)
         Returns:
             Tuple[torch.Tensor, torch.Tensor]: output tensor 1(Batch, Sequence, Dimension), output tensor 2(Batch, Sequence, Dimension)
         """
-        assert x1.shape[-1] == self.in_output_dim and x2.shape[-1] == self.in_output_dim
+        if self.quad_direction:
+            return self.forward_quad(x0_hw=x0, x1_hw=x1, x0_wh=x0_wh, x1_wh=x1_wh)
+        else:
+            return self.forward_normal(x0=x0, x1=x1)
+
+    def forward_normal(
+        self, x0: torch.Tensor, x1: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        assert x0.shape[-1] == self.in_output_dim and x1.shape[-1] == self.in_output_dim
 
         for i, layer in enumerate(self.layers):
-            x1, x2 = layer(x1, x2)
+            x0, x1 = layer(x0, x1)
 
-        return x1, x2
+        return x0, x1
+
+    def forward_quad(
+        self,
+        x0_hw: torch.Tensor,
+        x1_hw: torch.Tensor,
+        x0_wh: torch.Tensor,
+        x1_wh: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        
+        for i, layer in enumerate(self.layers):
+            x0_hw, x1_hw, x0_wh, x1_wh = layer(x0_hw, x1_hw, x0_wh, x1_wh)
+
+        return x0_hw, x1_hw, x0_wh, x1_wh

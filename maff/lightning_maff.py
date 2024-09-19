@@ -12,7 +12,7 @@ from pytorch_lightning.profilers.profiler import Profiler
 from pytorch_lightning.profilers import PassThroughProfiler
 
 from maff.maff import MAFF
-from maff.utils.supervision import compute_supervision_coarse
+from maff.utils.supervision import compute_supervision_coarse, compute_supervision_fine
 from maff.loss import MAFF_Loss
 from utils.metrics import (
     compute_symmetrical_epipolar_errors,
@@ -163,12 +163,16 @@ class PL_MAFF(pl.LightningModule):
             compute_supervision_coarse(batch, coarse_scale=self.coarse_scale)
 
         with self.profiler.profile("MAFF"):
-            self.maff(batch, training=training)
+            self.maff(batch)
+        
+        if self.config.LOSS.FINE_WEIGHT is not None:
+            with self.profiler.profile("Compute fine supervision"):
+                compute_supervision_fine(batch, config=self.config)
 
         if training:
             with self.profiler.profile("Compute losses"):
                 self.loss(batch)
-            
+
         torch.cuda.empty_cache()
 
     def _compute_metrics(self, batch):
@@ -196,7 +200,7 @@ class PL_MAFF(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         self._trainval_inference(batch, training=True)
-        
+
         if self.global_rank == 0:
             print(f"Loss :{batch['loss'].item(): .6f}", end="")
 
@@ -210,21 +214,10 @@ class PL_MAFF(pl.LightningModule):
                 self.logger.experiment.add_scalar(f"train/{k}", v, self.global_step)
 
             self.training_outputs.append(batch["loss"])
-        
+
         return {"loss": batch["loss"]}
 
     def on_train_epoch_end(self):
-        # log
-        total_loss = 0.0
-        for loss in self.training_outputs:
-            total_loss += loss
-        total_loss /= len(self.training_outputs)
-
-        if self.trainer.global_rank == 0:
-            self.logger.experiment.add_scalar(
-                "train/avg_loss_on_epoch", total_loss, self.current_epoch
-            )
-
         self.training_outputs.clear()
         torch.cuda.empty_cache()
 
@@ -275,7 +268,14 @@ class PL_MAFF(pl.LightningModule):
                 metrics, self.config.TRAINER.EPI_ERR_THR
             )
             for thr in [5, 10, 20]:
+                metric_name = f"auc@{thr}"
                 multi_val_metrics[f"auc@{thr}"].append(val_metrics_4tb[f"auc@{thr}"])
+                self.log(
+                    metric_name,
+                    val_metrics_4tb[metric_name],
+                    prog_bar=True,
+                    sync_dist=True,
+                )
 
             # 3. figures
             _figures = [o["figures"] for o in outputs]
