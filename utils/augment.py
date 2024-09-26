@@ -65,7 +65,10 @@ class MAFFAug(object):
                     saturation=(0.8, 1.2),
                     hue=(-0.2, 0.2),
                 ),
+                A.RandomRain(p=0.1),  # random occlusion
+                A.RandomSunFlare(p=0.1),
                 A.ImageCompression(p=0.25, quality_lower=50, quality_upper=80),
+                A.ISONoise(p=0.25),
             ]
         )
 

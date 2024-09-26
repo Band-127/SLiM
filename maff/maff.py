@@ -13,6 +13,7 @@ from maff.mamba.MambaEncoder import MambaEncoder
 from maff.transformer.transformer import LocalFeatureTransformer
 from maff.utils.position_encoding import DualMultiScaleSinePositionalEncoding
 from maff.utils.channel_alignment import ChannelAlignment
+from maff.utils.misc import Unsqueeze
 
 
 class MAFF(nn.Module):
@@ -27,8 +28,13 @@ class MAFF(nn.Module):
         self.coarse_scale_idx = config["COARSE_SCALE_IDX"]
         self.coarse_match_thres = config["COARSE_MATCHING"]["THRESHOLD"]
         self.debug = config["DEBUG"]
+
+        # some refinement configurations
         self.high_semantic_first = config["HIGH_SEMANTIC_FIRST"]
         self.quad_direction = config["QUAD_DIRECTION"]
+        self.pixel_shuffle_refinement = config["PIXEL_SHUFFLE_REFINEMENT"]
+        self.mask_refinement = config["MASK_REFINEMENT"]
+        self.disable_pe = config["DISABLE_PE"]
 
         # 1. Pyramid feature backbone
         self.feature_backbone = build_backbone(config["BACKBONE"])
@@ -39,12 +45,13 @@ class MAFF(nn.Module):
             dtype=self.dtype,
         )
         # 3. PE
-        self.pe = DualMultiScaleSinePositionalEncoding(
-            d_model=self.d_model,
-            max_hw=config["BACKBONE"]["INPUT_SIZE"],
-            scales=[1 / i for i in config["BACKBONE"]["RESOLUTION"]],
-            dtype=self.dtype,
-        )
+        if not self.disable_pe:
+            self.pe = DualMultiScaleSinePositionalEncoding(
+                d_model=self.d_model,
+                max_hw=config["BACKBONE"]["INPUT_SIZE"],
+                scales=[1 / i for i in config["BACKBONE"]["RESOLUTION"]],
+                dtype=self.dtype,
+            )
         # 4. Mamba fusion encoder or Transformer fusion encoder
         self.fusion_encoder = (
             MambaEncoder(
@@ -58,6 +65,40 @@ class MAFF(nn.Module):
             )
             if config["FUSION_TYPE"] == "mamba"
             else LocalFeatureTransformer(config=config["TRANSFORMER_FUSION"])
+        )
+        # 5. Pixel shuffle head
+        self.pixel_shuffle = (
+            nn.Sequential(
+                nn.Linear(
+                    in_features=self.d_model,
+                    out_features=self.d_model * (config["COARSE_SCALE"] ** 2),
+                    bias=True,
+                ),
+                Unsqueeze(-1),
+                Unsqueeze(-1),
+                nn.PixelShuffle(upscale_factor=config["COARSE_SCALE"]),
+            )
+            if self.pixel_shuffle_refinement
+            else nn.Identity()
+        )
+        # 6. Mask refinement
+        self.mask_refinement_head = (
+            nn.Sequential(
+                nn.Linear(
+                    in_features=self.d_model,
+                    out_features=int(self.d_model**0.5),
+                    bias=True,
+                ),
+                nn.GELU(approximate="tanh"),
+                nn.Linear(
+                    in_features=int(self.d_model**0.5),
+                    out_features=1,
+                    bias=True,
+                ),
+                nn.Sigmoid(),
+            )
+            if self.mask_refinement
+            else nn.Identity()
         )
 
     def forward(self, data: dict):
@@ -111,11 +152,12 @@ class MAFF(nn.Module):
             )
 
         # 3. Position Encoding
-        x0, x1 = self.pe(x0, x1)  # S x [B x C x H x W]
-        if self.debug:
-            print(
-                f"Step: Position Encoding\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
-            )
+        if not self.disable_pe:
+            x0, x1 = self.pe(x0, x1)  # S x [B x C x H x W]
+            if self.debug:
+                print(
+                    f"Step: Position Encoding\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
+                )
 
         # 4. Feature selection
         new_x0 = []
@@ -144,10 +186,10 @@ class MAFF(nn.Module):
         # 5. Flatten S x [B x C x H x W] -> [B x (HW) x (sum(C))]
         if self.quad_direction:
             x0_hw, x0_wh, x1_hw, x1_wh, x0_length, x1_length, x0_shape, x1_shape = (
-                self.flatten_quad(x0, x1)
+                self._flatten_quad(x0, x1)
             )
         else:
-            x0, x1, x0_length, x1_length = self.flatten(x0, x1)
+            x0, x1, x0_length, x1_length = self._flatten(x0, x1)
         if self.debug:
             print(
                 f"Step: Flatten features\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
@@ -165,11 +207,11 @@ class MAFF(nn.Module):
 
         # 7. Unflatten into S x [B x (HW) x C]
         if self.quad_direction:
-            x0, x1 = self.unflatten_quad(
+            x0, x1 = self._unflatten_quad(
                 x0_hw, x0_wh, x1_hw, x1_wh, x0_length, x1_length, x0_shape, x1_shape
             )
         else:
-            x0, x1 = self.unflatten(x0, x1, x0_length, x1_length)
+            x0, x1 = self._unflatten(x0, x1, x0_length, x1_length)
         if self.debug:
             print(
                 f"Step: Unflatten features\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
@@ -180,13 +222,42 @@ class MAFF(nn.Module):
             x0, x1 = x0[::-1], x1[::-1]
 
         data.update(
-            {"feat0_c": x0[self.coarse_scale_idx], "feat1_c": x1[self.coarse_scale_idx]}
+            {
+                "feat0_c": x0[self.coarse_scale_idx],
+                "feat1_c": x1[self.coarse_scale_idx],
+            }
         )
 
-        # 8. Correlation / Feature Matching
-        self.feature_matching(data, data["feat0_c"], data["feat1_c"], mask0, mask1)
+        # 8. Mask refinement
+        if self.mask_refinement:
+            refine_mask0 = self._mask_refinement(data["feat0_c"])
+            refine_mask1 = self._mask_refinement(data["feat1_c"])
+        else:
+            refine_mask0 = None
+            refine_mask1 = None
 
-    def flatten(self, x0: Sequence[torch.Tensor], x1: Sequence[torch.Tensor]):
+        # 9. Correlation / Feature Matching
+        self._feature_matching(
+            data,
+            data["feat0_c"],
+            data["feat1_c"],
+            mask0,
+            mask1,
+            refine_mask0,
+            refine_mask1,
+        )
+
+    def _mask_refinement(self, feat: torch.Tensor):
+        # feat: [B, L, C] -> [(B L), C]
+        b = feat.shape[0]
+        feat = rearrange(feat, "b l c -> (b l) c")
+        # [(B L), C] -> [(B L), 1]
+        mask = self.mask_refinement_head(feat)
+        # [(B L), 1] -> [B, L]
+        mask = rearrange(mask, "(b l) 1 -> b l", b=b)
+        return mask
+
+    def _flatten(self, x0: Sequence[torch.Tensor], x1: Sequence[torch.Tensor]):
         # [B x C x H x W] -> [B x (HW) x C]
         for i, scale in enumerate(x0):
             x0[i] = rearrange(scale, "b c h w -> b (h w) c")
@@ -201,7 +272,7 @@ class MAFF(nn.Module):
 
         return x0, x1, x0_length, x1_length
 
-    def flatten_quad(self, x0: Sequence[torch.Tensor], x1: Sequence[torch.Tensor]):
+    def _flatten_quad(self, x0: Sequence[torch.Tensor], x1: Sequence[torch.Tensor]):
         # [B x C x H x W] -> [B x (HW) x C], [B x (WH) x C]
         x0_hw = []
         x0_wh = []
@@ -229,7 +300,7 @@ class MAFF(nn.Module):
 
         return x0_hw, x0_wh, x1_hw, x1_wh, x0_length, x1_length, x0_shape, x1_shape
 
-    def unflatten(
+    def _unflatten(
         self,
         x0: torch.Tensor,
         x1: torch.Tensor,
@@ -242,7 +313,7 @@ class MAFF(nn.Module):
 
         return x0, x1
 
-    def unflatten_quad(
+    def _unflatten_quad(
         self,
         x0_hw: torch.Tensor,
         x0_wh: torch.Tensor,
@@ -259,7 +330,7 @@ class MAFF(nn.Module):
         x1_hw = torch.split(x1_hw, split_size_or_sections=x1_length, dim=1)
         x1_wh = torch.split(x1_wh, split_size_or_sections=x1_length, dim=1)
 
-        # [B x (HW) x C], [B x (WH) x C] -> [B x H x W x C]
+        # [B x (HW) x C], [B x (WH) x C] -> [B x HW x C]
         x0 = []
         x1 = []
         for i in range(len(x0_hw)):
@@ -291,13 +362,15 @@ class MAFF(nn.Module):
 
         return x0, x1
 
-    def feature_matching(
+    def _feature_matching(
         self,
         data: dict,
         x0: torch.Tensor,
         x1: torch.Tensor,
         mask1: torch.Tensor = None,
         mask2: torch.Tensor = None,
+        refine_mask1: torch.Tensor = None,
+        refine_mask2: torch.Tensor = None,
     ):
         """
         Feature Matching using full correlation, and getting the coordinate of the best match
@@ -308,6 +381,8 @@ class MAFF(nn.Module):
             x1 (torch.Tensor): [B, L1, C]
             mask1 (torch.Tensor, optional): [B, L0]. Defaults to None.
             mask2 (torch.Tensor, optional): [B, L1]. Defaults to None.
+            refine_mask1 (torch.Tensor, optional): [B, L0]. Mask generated by mask_refinement. Defaults to None.
+            refine_mask2 (torch.Tensor, optional): [B, L1]. Mask generated by mask_refinement. Defaults to None.
         """
         # 1. Full Correlation
         # Normalize
@@ -322,6 +397,12 @@ class MAFF(nn.Module):
                 ~(mask1.unsqueeze(-1) * mask2.unsqueeze(-2)).bool(), -1e9
             )
 
+        # Mask the area on similarity matrix by direct multiplication
+        if refine_mask1 is not None and refine_mask2 is not None:
+            sim_matrix = (
+                sim_matrix * refine_mask1.unsqueeze(-1) * refine_mask2.unsqueeze(-2)
+            )
+
         # Update similarity matrix into data batch, used in coarse supervision
         data.update({"sim_matrix": sim_matrix})
         if self.debug:
@@ -330,21 +411,24 @@ class MAFF(nn.Module):
             )
 
         # 2. Get coarse coordinates
-        self.get_coarse_coord(data=data)
+        self._get_coarse_coord(data=data)
         if self.debug:
             print(
                 f"Step: Get coarse coordinates\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
             )
 
         # 3. Fine Matching
-        self.fine_matching(data=data)
+        if self.pixel_shuffle_refinement:
+            self._fine_matching_with_pixel_shuffle(data=data)
+        else:
+            self._fine_matching(data=data)
         if self.debug:
             print(
                 f"Step: Fine Matching\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
             )
 
     @torch.no_grad()
-    def get_coarse_coord(self, data: dict):
+    def _get_coarse_coord(self, data: dict):
         sim_matrix = data["sim_matrix"]
         # Get coarse matches > threshold, using dual softmax
         conf_matrix = F.softmax(sim_matrix, 1) * F.softmax(sim_matrix, 2)
@@ -393,7 +477,7 @@ class MAFF(nn.Module):
             }
         )
 
-    def fine_matching(self, data: dict):
+    def _fine_matching(self, data: dict):
         feat0 = data["feat0_c"]
         feat1 = data["feat1_c"]
         b_idx_c = data["b_idx_c"]
@@ -433,7 +517,7 @@ class MAFF(nn.Module):
             )
 
         # 2. Pick a window of feature from coarse feature map x1 using coarse match
-        feat1_window_picked = self.extract_feat_window(
+        feat1_window_picked = self._extract_feat_window(
             _feat=feat1,
             feat_hw=data["hw1_c"],
             b_idx=b_idx_c,
@@ -500,7 +584,7 @@ class MAFF(nn.Module):
         )
 
     @staticmethod
-    def extract_feat_window(
+    def _extract_feat_window(
         _feat: torch.Tensor,
         feat_hw: Sequence[int],
         b_idx: torch.Tensor,
@@ -548,6 +632,102 @@ class MAFF(nn.Module):
         windows = rearrange(windows, "b h w c -> b c h w")
 
         return windows
+
+    def _fine_matching_with_pixel_shuffle(self, data: dict):
+        feat0 = data["feat0_c"]
+        feat1 = data["feat1_c"]
+        b_idx_c = data["b_idx_c"]
+        i_idx_c = data["i_idx_c"]
+        j_idx_c = data["j_idx_c"]
+        coarse_scale = int(data["hw0_i"][0] / data["hw0_c"][0])
+        H, W = data["hw0_c"]
+        C = feat0.shape[-1]
+
+        # no coarse match
+        if b_idx_c.shape[0] == 0:
+            with torch.no_grad():
+                data.update(
+                    {
+                        "fine_coord_0": torch.zeros(
+                            size=(0, 2), dtype=torch.float32, device=feat0.device
+                        ),
+                        "fine_coord_1": torch.zeros(
+                            size=(0, 2), dtype=torch.float32, device=feat0.device
+                        ),
+                        "conf_map": torch.zeros(
+                            size=(0, 3, 3), dtype=torch.float32, device=feat0.device
+                        ),
+                        "std": torch.zeros(
+                            size=(0, 1), dtype=torch.float32, device=feat0.device
+                        ),
+                    }
+                )
+            return
+        # 1. Pick feature from coarse feature map using coarse match
+        feat0_picked = feat0[b_idx_c, i_idx_c]  # M, C
+        feat1_picked = feat1[b_idx_c, j_idx_c]  # M, C
+        if self.debug:
+            print(
+                f"Step: Pick coarse match features\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
+            )
+
+        # 2. Pixel shuffle for second feature
+        r_half = coarse_scale // 2
+        feat0_picked = self.pixel_shuffle(feat0_picked)[
+            :, :, r_half, r_half
+        ]  # (M, C） -> (M, C*r^2) -> (M, C, r, r) -> (M, C)(center)
+        feat1_picked = self.pixel_shuffle(
+            feat1_picked
+        )  # (M, C） -> (M, C*r^2) -> (M, C, r, r)
+
+        # 3. Correlation between both feature
+        window_heatmap = torch.einsum("mc,mchw->mhw", feat0_picked, feat1_picked)
+        window_heatmap = torch.softmax(window_heatmap / (C**0.5), dim=1)
+        if self.debug:
+            print(
+                f"Step: Compute feature correlation\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
+            )
+
+        # 4. Compute coordinates from heatmap
+        coords_normalized = dsnt.spatial_expectation2d(window_heatmap[None], True)[0]
+        grid_normalized = create_meshgrid(
+            coarse_scale, coarse_scale, True, window_heatmap.device
+        ).reshape(1, -1, 2)  # [1, WW, 2]
+        if self.debug:
+            print(
+                f"Step: Compute normalized coordinates\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
+            )
+
+        # 5. Compute absolute coordinates, coarse coor + fine coor * scale
+        fine_coord_0 = data["coarse_coord_0"]
+        scale1 = data["scale1"][data["b_idx_c"]] if "scale0" in data else 1
+        fine_coord_1 = (coords_normalized * (coarse_scale // 2) * scale1) + data[
+            "coarse_coord_1"
+        ]
+        if self.debug:
+            print(
+                f"Step: Compute absolute coordinates\nGPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB"
+            )
+
+        # 6. Compute std over <x, y> (used in loss)
+        var = (
+            torch.sum(
+                grid_normalized**2 * window_heatmap.view(-1, coarse_scale**2, 1), dim=1
+            )
+            - coords_normalized**2
+        )  # [M, 2]
+        std = torch.sum(
+            torch.sqrt(torch.clamp(var, min=1e-10)), -1
+        )  # [M]  clamp needed for numerical stability
+
+        data.update(
+            {
+                "fine_coord_0": fine_coord_0,
+                "fine_coord_1": fine_coord_1,
+                "expec_f": coords_normalized,
+                "std": std,
+            }
+        )
 
     def load_state_dict(self, state_dict, *args, **kwargs):
         for k in list(state_dict.keys()):

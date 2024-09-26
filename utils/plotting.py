@@ -122,6 +122,8 @@ def _make_evaluation_figure(data, b_id, alpha="dynamic"):
         f"#Matches {len(kpts0)}",
         f"Precision({conf_thr:.2e}) ({100 * precision:.1f}%): {n_correct}/{len(kpts0)}",
         f"Recall({conf_thr:.2e}) ({100 * recall:.1f}%): {n_correct}/{n_gt_matches}",
+        f"t error: {data['t_errs'][b_id]:.2e}",
+        f"R error: {data['R_errs'][b_id]:.2e}",
     ]
 
     # make the figure

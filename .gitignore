@@ -3,3 +3,5 @@
 data/
 __pycache__/
 .*/
+dump/*
+logs/tb_logs/*

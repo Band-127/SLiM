@@ -1,3 +1,5 @@
+import sys
+import importlib
 import math
 import torch
 from yacs.config import CfgNode as CN
@@ -5,7 +7,6 @@ import pytorch_lightning as pl
 from loguru import logger as loguru_logger
 
 from utils.profiler import build_profiler
-from default_config import get_cfg_defaults
 from utils.misc import setup_gpus, get_rank_zero_only_logger
 from maff.lightning_maff import PL_MAFF
 from datasets.overall_dataset import MAFF_Dataset
@@ -15,6 +16,12 @@ loguru_logger = get_rank_zero_only_logger(loguru_logger)
 
 
 def main():
+    latest_ckpt_path = "logs/tb_logs/MegaDepth_640_(1, 1, 1, 1)_8_M2_640_MegaDepth_VMamba_T_FQPM/version_3"
+    latest_ckpt = "checkpoints/last.ckpt"
+
+    sys.path.append(latest_ckpt_path)
+    get_cfg_defaults = importlib.import_module("config").get_cfg_defaults
+
     torch.set_float32_matmul_precision("high")
     # get configurations
     config: CN = get_cfg_defaults()
@@ -40,12 +47,12 @@ def main():
     )
 
     # Profiler
-    profiler = build_profiler(config.PROFILER.PROFILER_NAME)
+    profiler = build_profiler("inference")
 
     # Lightning module
     model = PL_MAFF(
         config=config,
-        pretrained_ckpt=config.PRETRAINED_PATH,
+        pretrained_ckpt=latest_ckpt_path + "/" + latest_ckpt,
         profiler=profiler,
         dump_dir=config.DUMP_DIR,
     )

@@ -164,7 +164,7 @@ class PL_MAFF(pl.LightningModule):
 
         with self.profiler.profile("MAFF"):
             self.maff(batch)
-        
+
         if self.config.LOSS.FINE_WEIGHT is not None:
             with self.profiler.profile("Compute fine supervision"):
                 compute_supervision_fine(batch, config=self.config)
@@ -307,13 +307,13 @@ class PL_MAFF(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         # inference
         with self.profiler.profile("MAFF"):
-            self.maff(batch, training=False)
+            self.maff(batch)
 
         # metrics
         ret_dict, rel_pair_names = self._compute_metrics(batch)
 
         # dump results
-        keys_to_save = {"fine_coord_0", "fine_coord_1", "conf_map", "epi_errs"}
+        keys_to_save = {"fine_coord_0", "fine_coord_1", "epi_errs"}
 
         pair_names = list(zip(*batch["pair_names"]))
         bs = batch["image0"].shape[0]
@@ -334,23 +334,24 @@ class PL_MAFF(pl.LightningModule):
         self.test_outputs.append(ret_dict)
 
     def on_test_epoch_end(self):
-        # metrics: dict of list, numpy
-        _metrics = [o["metrics"] for o in self.test_outputs]
-        metrics = {
-            k: flattenList(gather(flattenList([_me[k] for _me in _metrics])))
-            for k in _metrics[0]
-        }
+        with torch.inference_mode(False):
+            # metrics: dict of list, numpy
+            _metrics = [o["metrics"] for o in self.test_outputs]
+            metrics = {
+                k: flattenList(gather(flattenList([_me[k] for _me in _metrics])))
+                for k in _metrics[0]
+            }
 
-        # [{key: [{...}, *#bs]}, *#batch]
-        if self.dump_dir is not None:
-            Path(self.dump_dir).mkdir(parents=True, exist_ok=True)
-            _dumps = flattenList(
-                [o["dumps"] for o in self.test_outputs]
-            )  # [{...}, #bs*#batch]
-            dumps = flattenList(gather(_dumps))  # [{...}, #proc*#bs*#batch]
-            logger.info(
-                f"Prediction and evaluation results will be saved to: {self.dump_dir}"
-            )
+            # [{key: [{...}, *#bs]}, *#batch]
+            if self.dump_dir is not None:
+                Path(self.dump_dir).mkdir(parents=True, exist_ok=True)
+                _dumps = flattenList(
+                    [o["dumps"] for o in self.test_outputs]
+                )  # [{...}, #bs*#batch]
+                dumps = flattenList(gather(_dumps))  # [{...}, #proc*#bs*#batch]
+                logger.info(
+                    f"Prediction and evaluation results will be saved to: {self.dump_dir}"
+                )
 
         if self.trainer.global_rank == 0:
             print(self.profiler.summary())

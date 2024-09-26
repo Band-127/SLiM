@@ -18,32 +18,10 @@ from datasets.overall_dataset import MAFF_Dataset
 # get logger and set as rank zero only(means ony info from rank 1 gpu will be stated out)
 loguru_logger = get_rank_zero_only_logger(loguru_logger)
 
-config = None
-
-
-def init_config():
-    global config
-    if config is None:
-        if dist.is_available() and dist.is_initialized():
-            rank = dist.get_rank()
-            if rank == 0:
-                config = get_cfg_defaults()
-                pl.seed_everything(config.GLOBAL_SEED)
-
-            config_list = [config]
-            dist.broadcast_object_list(config_list, src=0)
-            config = config_list[0]
-
-            dist.barrier()
-        else:
-            config = get_cfg_defaults()
-            pl.seed_everything(config.GLOBAL_SEED)
-    return config
-
 
 def main():
-    global config
-    config = init_config()
+    config = get_cfg_defaults()
+    pl.seed_everything(config.GLOBAL_SEED)
 
     torch.set_float32_matmul_precision("high")
 
@@ -114,18 +92,23 @@ def main():
     )
     loguru_logger.info("Trainer Initialized!")
 
-    # # Finding best LR with linear progression
-    # tuner = Tuner(trainer)
-    # lr_finder = tuner.lr_find(
-    #     model=model,
-    #     datamodule=data_module,
-    # )
-    # print(
-    #     f"Best LR found by LR finder with linear progression :{lr_finder.suggestion()}"
-    # )
-
-    # # Setting best LR
-    # model.lr = lr_finder.suggestion()
+    if config.TRAINER.FIND_LR:
+        # Finding best LR with linear progression
+        temp = config.TRAINER.WARMUP_TYPE
+        config.TRAINER.WARMUP_TYPE = "constant"     # set to constant to find lr
+        tuner = Tuner(trainer)
+        lr_finder = tuner.lr_find(
+            model=model,
+            datamodule=data_module,
+            num_training=300
+        )
+        print(
+            f"Best LR found by LR finder with linear progression :{lr_finder.suggestion()}"
+        )
+        # Setting best LR
+        config.TRAINER.TRUE_LR = lr_finder.suggestion()
+        model.lr = lr_finder.suggestion()
+        config.TRAINER.WARMUP_TYPE = temp
 
     # Training
     loguru_logger.info("Start training!")

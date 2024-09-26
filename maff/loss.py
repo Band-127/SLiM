@@ -160,7 +160,7 @@ class MAFF_Loss(nn.Module):
                 loss += loss_f * self.config["FINE_WEIGHT"]
                 loss_scalars.update({"loss_f": loss_f.clone().detach().cpu()})
             else:
-                loss_scalars.update({"loss_f": torch.tensor(1.0).clone().detach().cpu()})
+                loss_scalars.update({"loss_f": torch.tensor(0.0).clone().detach().cpu()})
 
         # 3. Total loss
         data.update({"loss": loss, "loss_scalars": loss_scalars})

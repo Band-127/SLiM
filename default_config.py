@@ -1,3 +1,4 @@
+import os
 import random
 from datetime import datetime
 from yacs.config import CfgNode as CN
@@ -18,7 +19,7 @@ _CN.DUMP_DIR = "dump/maff_baseline_outdoor"
 _CN.DEVICE = CN()
 _CN.DEVICE.ENABLE_GPU = True        # Whether enable GPUs, default true
 _CN.DEVICE.ENABLE_DDP = True        # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "2,3,4,5,6,7"  # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.GPU_IDX = "4,5"  # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
@@ -77,9 +78,9 @@ _CN.TRAINER = CN()
 _CN.TRAINER.WORLD_SIZE = None                       # Will be calculated using number of nodes and exact number of devices available
 _CN.TRAINER.GRADIENT_CLIPPING = 0.5                 # Gradient clipping
 _CN.TRAINER.CANONICAL_BS = 8
-_CN.TRAINER.CANONICAL_LR = 1e-4                     # using LR finder provided by pytorch lightning
+_CN.TRAINER.CANONICAL_LR = 1e-3                     # using LR finder provided by pytorch lightning
 _CN.TRAINER.SCALING = None                          # this will be calculated automatically
-_CN.TRAINER.FIND_LR = True                          # use learning rate finder from pytorch-lightning
+_CN.TRAINER.FIND_LR = False                          # use learning rate finder from pytorch-lightning
 # optimizer
 _CN.TRAINER.OPTIMIZER = "AdamW"                     # options: [Adam, AdamW]
 _CN.TRAINER.TRUE_LR = None
@@ -102,7 +103,7 @@ _CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 32                # number of val/test paris f
 _CN.TRAINER.PLOT_MODE = 'evaluation'                # ['evaluation', 'confidence']
 _CN.TRAINER.PLOT_MATCHES_ALPHA = 'dynamic'
 # For metric calculation
-_CN.TRAINER.RANSAC_PIXEL_THR = 4
+_CN.TRAINER.RANSAC_PIXEL_THR = 1
 _CN.TRAINER.RANSAC_CONF = 0.99999
 _CN.TRAINER.EPI_ERR_THR = 5e-4 if _CN.DATASET.TRAINVAL_DATA_SOURCE == "ScanNet" else 1e-4   # recommendation: 5e-4 for ScanNet, 1e-4 for MegaDepth (from SuperGlue)
 
@@ -119,12 +120,15 @@ _CN.MODEL = CN()
 _CN.MODEL.DEBUG = _CN.DEBUG
 _CN.MODEL.DTYPE = _CN.DTYPE
 _CN.MODEL.FUSION_TYPE = "mamba"                     # options: ["mamba", "transformer"]
-_CN.MODEL.HIGH_SEMANTIC_FIRST = True
-_CN.MODEL.QUAD_DIRECTION = True
 _CN.MODEL.SCALES_SELECTION = (1, 1, 1, 1)           # E.g. if BACKBONE.RESOLUTION = (2, 4, 8), SCALES_SELECTION = (0, 1, 1), means only 1/4 and 1/8 feature maps are selected for feature fusion
 _CN.MODEL.COARSE_SCALE_IDX = 1
 _CN.MODEL.COARSE_SCALE = None                       # Will be calculated automatically
-_CN.MODEL.DIMENSION = 384
+_CN.MODEL.DIMENSION = 256
+_CN.MODEL.HIGH_SEMANTIC_FIRST = True                # Whether higher level semantic enter fusion network first
+_CN.MODEL.QUAD_DIRECTION = True                     # Whether involve [HW, WH, HW-inverse, WH-inverse] scans or [HW, HW-inverse] only
+_CN.MODEL.PIXEL_SHUFFLE_REFINEMENT = True           # Whether using pixel shuffle refinement for fine coordinates generation
+_CN.MODEL.MASK_REFINEMENT = True                    # Whether using mask refinement(generate mask from output feature using mlp to mask unwanted area in correlation)
+_CN.MODEL.DISABLE_PE = True                         # Whether using positional encoding
 # Feature Backbone
 _CN.MODEL.BACKBONE = CN()
 _CN.MODEL.BACKBONE.BACKBONE_TYPE = "VMamba_T"       # options: ["ResNet18", "ResNet18_modified", "ResNet18_pretrained", "VMamba_T", "VMamba_S", "VMamba_B"]
@@ -190,7 +194,9 @@ _CN.LOGGER.LOGGER_NAME = (f"{_CN.DATASET.TRAINVAL_DATA_SOURCE}_{_CN.IMAGE_SIZE}_
                         (f"_{_CN.DATASET.TRAINVAL_DATA_SOURCE}") + \
                         (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}") + \
                         ("_F" if _CN.LOSS.FINE_WEIGHT is not None else "") + \
-                        ("Q" if _CN.MODEL.QUAD_DIRECTION else "")
+                        ("Q" if _CN.MODEL.QUAD_DIRECTION else "") + \
+                        ("P" if _CN.MODEL.PIXEL_SHUFFLE_REFINEMENT else "") + \
+                        ("M" if _CN.MODEL.MASK_REFINEMENT else "")
 
 # geometric metrics and pose solver
 _CN.TRAINER.POSE_GEO_MODEL = "E"  # ["E", "F", "H"]
@@ -216,14 +222,19 @@ elif _CN.MODEL.BACKBONE.BACKBONE_TYPE == "ResNet18_pretrained":
 def get_cfg_defaults():
     # Set the seed
     if _CN.GLOBAL_SEED is None:
-        # set a random number with current time as random seed
-        random.seed(a=None)
-        _CN.GLOBAL_SEED = random.randint(0, 4294967295)
-    # print out the random seed
-    print("#" * 64 + f"\nRandom seed: {_CN.GLOBAL_SEED}\n" + "#" * 64)
+        if os.environ.get('GLOBAL_SEED'):
+            _CN.GLOBAL_SEED = int(os.environ.get('GLOBAL_SEED'))
+        else:
+            # set a random number with current time as random seed
+            random.seed(a=None)
+            _CN.GLOBAL_SEED = random.randint(0, 4294967295)
+            os.environ['GLOBAL_SEED'] = str(_CN.GLOBAL_SEED)
 
-    # print logger name
-    print(f"Logger name: {_CN.LOGGER.LOGGER_NAME}")
+            # print out the random seed
+            print("#" * 64 + f"\nRandom seed: {_CN.GLOBAL_SEED}\n" + "#" * 64)
+
+            # print logger name
+            print(f"Logger name: {_CN.LOGGER.LOGGER_NAME}")
 
     # Return a clone so that the defaults will not be altered
     # This is for the "local variable" use pattern
