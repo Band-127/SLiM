@@ -1,8 +1,10 @@
 from loguru import logger
 
 import torch
+import torch.nn.functional as F
 from einops import repeat
 from kornia.utils import create_meshgrid
+from einops.einops import rearrange
 
 from .geometry import warp_kpts
 
@@ -145,6 +147,52 @@ def spvs_coarse(data, coarse_scale):
     # 6. save intermediate results (for fast fine-level computation)
     data.update({"spv_w_pt0_i": w_pt0_i, "spv_pt1_i": grid_pt1_i})
 
+    # 7. conf map supervision using gt depth
+    # 使用gt深度进行置信图监督
+    depth0 = data["depth0"]  # B, H, W
+    depth1 = data["depth1"]  # B, H, W
+    supervision_depth0 = []
+    supervision_depth1 = []
+    # Rescale depth using scale factor
+    for b_idx in range(N):
+        supervision_depth0.append(
+            F.interpolate(
+                (depth0[b_idx, None, None] > 0).float(),
+                scale_factor=(
+                    1 / scale0[b_idx][0, 0].item(),
+                    1 / scale0[b_idx][0, 1].item(),
+                ),
+                mode="bilinear",
+                align_corners=False,
+            )
+        )
+        supervision_depth1.append(
+            F.interpolate(
+                (depth1[b_idx, None, None] > 0).float(),
+                scale_factor=(
+                    1 / scale1[b_idx][0, 0].item(),
+                    1 / scale1[b_idx][0, 1].item(),
+                ),
+                mode="bilinear",
+                align_corners=False,
+            )
+        )
+    supervision_depth0 = torch.stack(supervision_depth0, dim=0)[
+        :, 0, 0, :h0, :w0
+    ]  # B, Hc, Wc
+    supervision_depth1 = torch.stack(supervision_depth1, dim=0)[
+        :, 0, 0, :h1, :w1
+    ]  # B, Hc, Wc
+    # Flatten B, Hc, Wc -> B, Lc=Hc*Wc
+    supervision_depth0 = rearrange(supervision_depth0, "b h w -> b (h w)")
+    supervision_depth1 = rearrange(supervision_depth1, "b h w -> b (h w)")
+    data.update(
+        {
+            "supervision_depth0": supervision_depth0,
+            "supervision_depth1": supervision_depth1,
+        }
+    )
+
 
 def compute_supervision_coarse(data, coarse_scale):
     """
@@ -177,13 +225,14 @@ def spvs_fine(data, config):
         data (dict):{
             "expec_f_gt": [M, 2]}
     """
+    device = data["image0"].device
     # 1. misc
     # w_pt0_i, pt1_i = data.pop('spv_w_pt0_i'), data.pop('spv_pt1_i')
     w_pt0_i, pt1_i = data["spv_w_pt0_i"], data["spv_pt1_i"]
     radius = (
         config["MODEL"]["COARSE_SCALE"] // 2
         if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
-        else config["MODEL"]["FINE_MATCHING"]["WINDOW_SIZE"] // 2
+        else int(config["MODEL"]["COARSE_SCALE"] // config["MODEL"]["FINE_SCALE"]) // 2
     )
 
     # 2. get coarse prediction
@@ -193,14 +242,30 @@ def spvs_fine(data, config):
     scale = (
         1
         if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
-        else data["hw0_i"][0] / data["hw0_c"][0]
+        else config["MODEL"]["FINE_SCALE"]
     )
     scale = scale * data["scale1"][b_ids] if "scale1" in data else scale
     # `expec_f_gt` might exceed the window, i.e. abs(*) > 1, which would be filtered later
     expec_f_gt = (
         (w_pt0_i[b_ids, i_ids] - pt1_i[b_ids, j_ids]) / scale / radius
     )  # [M, 2]
-    data.update({"expec_f_gt": expec_f_gt})
+    data.update({"coord_offset_f_gt": expec_f_gt})
+    correct_mask = torch.linalg.norm(expec_f_gt, ord=float("inf"), dim=1) < 1.0
+
+    # 4. compute sim_matrix_f_gt
+    M = expec_f_gt.shape[0]
+    W = (
+        config["MODEL"]["COARSE_SCALE"]
+        if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
+        else int(config["MODEL"]["COARSE_SCALE"] // config["MODEL"]["FINE_SCALE"])
+    )
+    sim_matrix_f_gt = torch.zeros(M, W, W, device=device)
+    expec_f_gt_idx = ((expec_f_gt + 1) / 2 * (W - 1)).round().long()
+    sim_matrix_f_gt[
+        correct_mask, expec_f_gt_idx[correct_mask, 0], expec_f_gt_idx[correct_mask, 1]
+    ] = 1
+
+    data.update({"sim_matrix_f_gt": sim_matrix_f_gt})
 
 
 def compute_supervision_fine(data, config):

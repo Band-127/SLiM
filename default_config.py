@@ -19,7 +19,7 @@ _CN.DUMP_DIR = "dump/maff_baseline_outdoor"
 _CN.DEVICE = CN()
 _CN.DEVICE.ENABLE_GPU = True        # Whether enable GPUs, default true
 _CN.DEVICE.ENABLE_DDP = True        # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "4,5"  # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.GPU_IDX = "1,2"          # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
@@ -78,9 +78,10 @@ _CN.TRAINER = CN()
 _CN.TRAINER.WORLD_SIZE = None                       # Will be calculated using number of nodes and exact number of devices available
 _CN.TRAINER.GRADIENT_CLIPPING = 0.5                 # Gradient clipping
 _CN.TRAINER.CANONICAL_BS = 8
-_CN.TRAINER.CANONICAL_LR = 1e-3                     # using LR finder provided by pytorch lightning
+_CN.TRAINER.CANONICAL_LR = 3e-4                     # using LR finder provided by pytorch lightning
 _CN.TRAINER.SCALING = None                          # this will be calculated automatically
-_CN.TRAINER.FIND_LR = False                          # use learning rate finder from pytorch-lightning
+_CN.TRAINER.FIND_LR = False                         # use learning rate finder from pytorch-lightning, TODO: fix lr finder
+_CN.TRAINER.FIRST_STAGE_EPOCHS = 2                  # first stage epochs
 # optimizer
 _CN.TRAINER.OPTIMIZER = "AdamW"                     # options: [Adam, AdamW]
 _CN.TRAINER.TRUE_LR = None
@@ -89,8 +90,8 @@ _CN.TRAINER.ADAMW_DECAY = 0.1
 # learning rate scheduler
 _CN.TRAINER.SCHEDULER = "MultiStepLR"               # options: [MultiStepLR, CosineAnnealing, ExponentialLR]
 _CN.TRAINER.SCHEDULER_INTERVAL = "epoch"            # [epoch, step]
-_CN.TRAINER.MSLR_MILESTONES = [2, 4, 8, 12, 16, 20, 24, 28] # MSLR: MultiStepLR
-_CN.TRAINER.MSLR_GAMMA = 0.2
+_CN.TRAINER.MSLR_MILESTONES = [4, 8, 12, 16, 20]    # MSLR: MultiStepLR
+_CN.TRAINER.MSLR_GAMMA = 0.5
 _CN.TRAINER.COSA_TMAX = 30                          # COSA: CosineAnnealing
 _CN.TRAINER.ELR_GAMMA = 0.999992                    # ELR: ExponentialLR, this value for "step" interval
 # step-based warm-up
@@ -99,11 +100,11 @@ _CN.TRAINER.WARMUP_RATIO = 0.1
 _CN.TRAINER.WARMUP_STEP = 500
 # plotting related
 _CN.TRAINER.ENABLE_PLOTTING = True
-_CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 32                # number of val/test paris for plotting
+_CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 64                # number of val/test paris for plotting
 _CN.TRAINER.PLOT_MODE = 'evaluation'                # ['evaluation', 'confidence']
 _CN.TRAINER.PLOT_MATCHES_ALPHA = 'dynamic'
 # For metric calculation
-_CN.TRAINER.RANSAC_PIXEL_THR = 1
+_CN.TRAINER.RANSAC_PIXEL_THR = 0.5
 _CN.TRAINER.RANSAC_CONF = 0.99999
 _CN.TRAINER.EPI_ERR_THR = 5e-4 if _CN.DATASET.TRAINVAL_DATA_SOURCE == "ScanNet" else 1e-4   # recommendation: 5e-4 for ScanNet, 1e-4 for MegaDepth (from SuperGlue)
 
@@ -119,27 +120,30 @@ _CN.PROFILER.PROFILER__NAME = None                  # options: [None, "inference
 _CN.MODEL = CN()
 _CN.MODEL.DEBUG = _CN.DEBUG
 _CN.MODEL.DTYPE = _CN.DTYPE
-_CN.MODEL.FUSION_TYPE = "mamba"                     # options: ["mamba", "transformer"]
+_CN.MODEL.FUSION_TYPE = "mamba"                     # options: ["mamba", "transformer", None], None for no feature fusion
 _CN.MODEL.SCALES_SELECTION = (1, 1, 1, 1)           # E.g. if BACKBONE.RESOLUTION = (2, 4, 8), SCALES_SELECTION = (0, 1, 1), means only 1/4 and 1/8 feature maps are selected for feature fusion
 _CN.MODEL.COARSE_SCALE_IDX = 1
 _CN.MODEL.COARSE_SCALE = None                       # Will be calculated automatically
+_CN.MODEL.FINE_SCALE_IDX = 0
+_CN.MODEL.FINE_SCALE = None                         # Will be calculated automatically
 _CN.MODEL.DIMENSION = 256
-_CN.MODEL.HIGH_SEMANTIC_FIRST = True                # Whether higher level semantic enter fusion network first
-_CN.MODEL.QUAD_DIRECTION = True                     # Whether involve [HW, WH, HW-inverse, WH-inverse] scans or [HW, HW-inverse] only
 _CN.MODEL.PIXEL_SHUFFLE_REFINEMENT = True           # Whether using pixel shuffle refinement for fine coordinates generation
-_CN.MODEL.MASK_REFINEMENT = True                    # Whether using mask refinement(generate mask from output feature using mlp to mask unwanted area in correlation)
-_CN.MODEL.DISABLE_PE = True                         # Whether using positional encoding
+_CN.MODEL.CONF_MASK_DEPTH_REFINEMENT = True         # Whether using depth map to refine conf mask(generate confidence mask from output feature using mlp to mask unwanted area in correlation)
+_CN.MODEL.FINE_REFINEMENT = True                    # Whether using feature refinement network for fine feature
+_CN.MODEL.COORD_REFINEMENT = True                   # Whether using coordinate refinement for fine coordinates generation
 # Feature Backbone
 _CN.MODEL.BACKBONE = CN()
-_CN.MODEL.BACKBONE.BACKBONE_TYPE = "VMamba_T"       # options: ["ResNet18", "ResNet18_modified", "ResNet18_pretrained", "VMamba_T", "VMamba_S", "VMamba_B"]
-_CN.MODEL.BACKBONE.RESOLUTION = (4, 8, 16, 32)      # options: [(2, 4, 8), (2, 4, 8, 16)] for ResNet18 and ResNet18_modified, will automatically set for ResNet18_pretrained and VMamba
-_CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256, 512) # options: (128, 196, 256)(Modified by LoFTR), will automatically set for ResNet18_pretrained and VMamba
+_CN.MODEL.BACKBONE.BACKBONE_TYPE = "VMamba_T"       # options: ["ResNet18", "ResNet18_modified", "ResNet18_pretrained", "VMamba_T", "VMamba_S", "VMamba_B", "ResNet18_pretrained_FPN" , "VMamba_T_FPN", "VMamba_S_FPN", "VMamba_B_FPN"]
+_CN.MODEL.BACKBONE.RESOLUTION = (4, 8, 16, 32)          # options: [(2, 4, 8), (2, 4, 8, 16)] for ResNet18 and ResNet18_modified, will automatically set for ResNet18_pretrained and VMamba
+_CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256, 512)     # options: (128, 196, 256)(Modified by LoFTR), will automatically set for ResNet18_pretrained and VMamba
 _CN.MODEL.BACKBONE.INPUT_SIZE = _CN.IMAGE_SIZE
+_CN.MODEL.BACKBONE.FPN_OUT_CHANNELS = _CN.MODEL.DIMENSION
 # Mamba Feature Fusion
 _CN.MODEL.MAMBA_FUSION = CN()
 _CN.MODEL.MAMBA_FUSION.USING_MAMBA2 = True          # Whether using mamba2 or not
 _CN.MODEL.MAMBA_FUSION.INNER_EXPANSION = 2          # Inner dimension expansion rate for mamba, inner dimension=rate*input dimension
-_CN.MODEL.MAMBA_FUSION.CONV_DIM = 4                 # Conv dimension for mamba
+_CN.MODEL.MAMBA_FUSION.CONV_DIM = 3                 # Conv dimension for mamba
+_CN.MODEL.MAMBA_FUSION.DELTA = 16                   # Delta dimension for mamba
 _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER = 0           # number of "self attn." layer
 _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER = 4          # number of "cross attn." layer
 _CN.MODEL.MAMBA_FUSION.LAYER_TYPES = ["self"] * _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER + \
@@ -151,72 +155,97 @@ _CN.MODEL.TRANSFORMER_FUSION.NHEAD = 8
 _CN.MODEL.TRANSFORMER_FUSION.ATTENTION = "linear"
 _CN.MODEL.TRANSFORMER_FUSION.LAYERS = 1             # number of self+cross attn. layer
 _CN.MODEL.TRANSFORMER_FUSION.LAYER_TYPES = ['self', 'cross'] * _CN.MODEL.TRANSFORMER_FUSION.LAYERS
+# Fine Feature Refinement
+_CN.MODEL.FINE_REFINEMENT_MODEL = CN()
+_CN.MODEL.FINE_REFINEMENT_MODEL.INNER_EXPANSION = 2
+_CN.MODEL.FINE_REFINEMENT_MODEL.CONV_DIM = 4
+_CN.MODEL.FINE_REFINEMENT_MODEL.DELTA = 16
+_CN.MODEL.FINE_REFINEMENT_MODEL.NUM_LAYER = 2
+_CN.MODEL.FINE_REFINEMENT_MODEL.USING_MAMBA2 = True
+# Coordinate Refinement
+_CN.MODEL.COORD_REFINEMENT = CN()
+_CN.MODEL.COORD_REFINEMENT.INNER_EXPANSION = 2
+_CN.MODEL.COORD_REFINEMENT.CONV_DIM = 4
+_CN.MODEL.COORD_REFINEMENT.DELTA = 16
+_CN.MODEL.COORD_REFINEMENT.NUM_LAYER = 2
+_CN.MODEL.COORD_REFINEMENT.USING_MAMBA2 = True
 # Coarse matching
 _CN.MODEL.COARSE_MATCHING = CN()
-_CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.5
-# Fine matching
-_CN.MODEL.FINE_MATCHING = CN()
-_CN.MODEL.FINE_MATCHING.WINDOW_SIZE = 3
+_CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.3
+_CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 2500
 
 ########    Loss Configurations    ########
 _CN.LOSS = CN()
 # COARSE MATCHING
-_CN.LOSS.POS_WEIGHT = 1.0
-_CN.LOSS.NEG_WEIGHT = 1.0
 _CN.LOSS.COARSE_WEIGHT = 1.0
-_CN.LOSS.COARSE_TYPE = 'focal'                      # options: ['focal', 'cross_entropy']
 _CN.LOSS.FOCAL_ALPHA = 0.25
 _CN.LOSS.FOCAL_GAMMA = 2.0
 # FINE MATCHING
 _CN.LOSS.FINE_WEIGHT = 1.0
+_CN.LOSS.FINE_TYPE = 'l2'                           # options: ['l2', 'l2_std']
 _CN.LOSS.FINE_THR = 1.0
+# CONFIDENCE MASK REFINEMENT
+_CN.LOSS.CONF_MASK_DEPTH_REFINEMENT = _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT
 
 ########    Profiler Configurations    ########
 _CN.PROFILER = CN()
 _CN.PROFILER.PROFILER_NAME = None                   # options: [None, "inference", "pytorch"], Default: None -> PassThroughProfiler
 
-########    Logger Configurations    ########
+# Set model backbone settings for VMamba and pretrained ResNet18
+if _CN.MODEL.BACKBONE.BACKBONE_TYPE == "VMamba_T" or _CN.MODEL.BACKBONE.BACKBONE_TYPE == "VMamba_T_FPN":
+    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
+    _CN.MODEL.BACKBONE.LAYER_DIMS = (24, 96, 192, 384, 768)
+    _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
+    _CN.MODEL.COARSE_SCALE_IDX = 2
+    _CN.MODEL.FINE_SCALE_IDX = 1
+elif _CN.MODEL.BACKBONE.BACKBONE_TYPE == "VMamba_S" or _CN.MODEL.BACKBONE.BACKBONE_TYPE == "VMamba_S_FPN":
+    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
+    _CN.MODEL.BACKBONE.LAYER_DIMS = (24, 96, 192, 384, 768)
+    _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
+    _CN.MODEL.COARSE_SCALE_IDX = 2
+    _CN.MODEL.FINE_SCALE_IDX = 1
+elif _CN.MODEL.BACKBONE.BACKBONE_TYPE == "VMamba_B" or _CN.MODEL.BACKBONE.BACKBONE_TYPE == "VMamba_B_FPN":
+    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
+    _CN.MODEL.BACKBONE.LAYER_DIMS = (32, 128, 256, 512, 1024)
+    _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
+    _CN.MODEL.COARSE_SCALE_IDX = 2
+    _CN.MODEL.FINE_SCALE_IDX = 1
+elif _CN.MODEL.BACKBONE.BACKBONE_TYPE == "ResNet18_pretrained" or _CN.MODEL.BACKBONE.BACKBONE_TYPE == "ResNet18_pretrained_FPN":
+    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
+    _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 64, 128, 256, 512)
+    _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
+    _CN.MODEL.COARSE_SCALE_IDX = 2
+    _CN.MODEL.FINE_SCALE_IDX = 1
 # Calculate coarse scale
-reach = _CN.MODEL.COARSE_SCALE_IDX
-for idx, i in enumerate(_CN.MODEL.SCALES_SELECTION):
-    if i:
-        if reach:
-            reach -= 1
-            continue
-        _CN.DATASET.MGDPT_COARSE_SCALE = _CN.MODEL.COARSE_SCALE = _CN.MODEL.BACKBONE.RESOLUTION[idx]
-        break
+_CN.DATASET.MGDPT_COARSE_SCALE = _CN.MODEL.COARSE_SCALE = _CN.MODEL.BACKBONE.RESOLUTION[_CN.MODEL.COARSE_SCALE_IDX]
+# Calculate fine scale
+_CN.MODEL.FINE_SCALE = _CN.MODEL.BACKBONE.RESOLUTION[_CN.MODEL.FINE_SCALE_IDX]
+
+########    Logger Configurations    ########
 _CN.LOGGER = CN()
+FUSION_TYPE_MARK  = "None"
+if _CN.MODEL.FUSION_TYPE == "mamba":
+    FUSION_TYPE_MARK = "M"
+    if _CN.MODEL.MAMBA_FUSION.USING_MAMBA2:
+        FUSION_TYPE_MARK += "2"
+elif _CN.MODEL.FUSION_TYPE == "transformer":
+    FUSION_TYPE_MARK = "T"
+
 _CN.LOGGER.LOGGER_NAME = (f"{_CN.DATASET.TRAINVAL_DATA_SOURCE}_{_CN.IMAGE_SIZE}_{_CN.MODEL.SCALES_SELECTION}_") + \
                         (f"{_CN.MODEL.COARSE_SCALE}_") + \
-                        ("M" if _CN.MODEL.FUSION_TYPE == "mamba" else "T") + \
-                        ("2" if _CN.MODEL.MAMBA_FUSION.USING_MAMBA2 else "") + \
-                        (f"_{_CN.IMAGE_SIZE}") + \
-                        (f"_{_CN.DATASET.TRAINVAL_DATA_SOURCE}") + \
-                        (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}") + \
-                        ("_F" if _CN.LOSS.FINE_WEIGHT is not None else "") + \
-                        ("Q" if _CN.MODEL.QUAD_DIRECTION else "") + \
+                        (f"{_CN.MODEL.FINE_SCALE}_") + \
+                        (f"{FUSION_TYPE_MARK}") + \
+                        (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}_") + \
                         ("P" if _CN.MODEL.PIXEL_SHUFFLE_REFINEMENT else "") + \
-                        ("M" if _CN.MODEL.MASK_REFINEMENT else "")
+                        ("D" if _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT else "") + \
+                        ("F" if _CN.MODEL.FINE_REFINEMENT else "") + \
+                        ("C" if _CN.MODEL.COORD_REFINEMENT else "")
 
 # geometric metrics and pose solver
 _CN.TRAINER.POSE_GEO_MODEL = "E"  # ["E", "F", "H"]
 _CN.TRAINER.POSE_ESTIMATION_METHOD = "RANSAC"  # [RANSAC, DEGENSAC, MAGSAC]
 _CN.TRAINER.RANSAC_MAX_ITERS = 10000
 _CN.TRAINER.USE_MAGSACPP = False
-
-# Set model backbone settings for VMamba and pretrained ResNet18
-if _CN.MODEL.BACKBONE.BACKBONE_TYPE == "VMamba_T":
-    _CN.MODEL.BACKBONE.RESOLUTION = (4, 8, 16, 32)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (96, 192, 384, 768)
-elif _CN.MODEL.BACKBONE.BACKBONE_TYPE == "VMamba_S":
-    _CN.MODEL.BACKBONE.RESOLUTION = (4, 8, 16, 32)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (96, 192, 384, 768)
-elif _CN.MODEL.BACKBONE.BACKBONE_TYPE == "VMamba_B":
-    _CN.MODEL.BACKBONE.RESOLUTION = (4, 8, 16, 32)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (128, 256, 512, 1024)
-elif _CN.MODEL.BACKBONE.BACKBONE_TYPE == "ResNet18_pretrained":
-    _CN.MODEL.BACKBONE.RESOLUTION = (4, 8, 16, 32)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256, 512)
 
 
 def get_cfg_defaults():
@@ -239,3 +268,6 @@ def get_cfg_defaults():
     # Return a clone so that the defaults will not be altered
     # This is for the "local variable" use pattern
     return _CN.clone()
+
+if __name__ == "__main__":
+    print(f"Logger name: {_CN.LOGGER.LOGGER_NAME}")

@@ -57,12 +57,12 @@ class MAFFAug(object):
         self.augmentor = A.Compose(
             [
                 A.Blur(p=0.1),
-                A.MotionBlur(p=0.2),
+                A.MotionBlur(p=0.25),
                 A.ColorJitter(
                     p=0.5,
-                    brightness=(0.8, 1.2),
-                    contrast=(0.8, 1.2),
-                    saturation=(0.8, 1.2),
+                    brightness=(0.6, 1.4),
+                    contrast=(0.6, 1.4),
+                    saturation=(0.6, 1.4),
                     hue=(-0.2, 0.2),
                 ),
                 A.RandomRain(p=0.1),  # random occlusion

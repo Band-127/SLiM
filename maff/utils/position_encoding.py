@@ -78,7 +78,9 @@ class MultiScaleSinePositionalEncoding(nn.Module):
                 scale_factor=(scales[i], scales[i]),
             ).squeeze(0)
 
-            self.register_buffer(f"all_scales_pos_emb_{i}", hw_pos_emb_rescaled, persistent=False)
+            self.register_buffer(
+                f"all_scales_pos_emb_{i}", hw_pos_emb_rescaled, persistent=False
+            )
 
     def forward(self, x: Sequence[torch.Tensor]):
         """
@@ -89,7 +91,9 @@ class MultiScaleSinePositionalEncoding(nn.Module):
         for s, single_scale in enumerate(x):
             batch_size = single_scale.shape[0]
             for b in range(batch_size):
-                single_scale[b] = single_scale[b] + getattr(self, f"all_scales_pos_emb_{s}")
+                single_scale[b] = single_scale[b] + getattr(
+                    self, f"all_scales_pos_emb_{s}"
+                )
 
         return x
 
@@ -171,7 +175,11 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
                     scale_factor=(scales[i], scales[i]),
                 ).squeeze(0)
 
-                self.register_buffer(f"all_scales_pos_emb_{i + input * self.num_scales}", hw_pos_emb_rescaled, persistent=False)
+                self.register_buffer(
+                    f"all_scales_pos_emb_{i + input * self.num_scales}",
+                    hw_pos_emb_rescaled,
+                    persistent=False,
+                )
 
     def forward(self, x1: Sequence[torch.Tensor], x2: Sequence[torch.Tensor]):
         """
@@ -183,12 +191,23 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
         for s, single_scale in enumerate(x1):
             batch_size = single_scale.shape[0]
             for b in range(batch_size):
-                single_scale[b] = single_scale[b] + getattr(self, f"all_scales_pos_emb_{s}")
+                single_scale[b] = single_scale[b] + getattr(
+                    self, f"all_scales_pos_emb_{s}"
+                )
 
         for s, single_scale in enumerate(x2):
             batch_size = single_scale.shape[0]
             for b in range(batch_size):
-                single_scale[b] = (
-                    single_scale[b] + getattr(self, f"all_scales_pos_emb_{s + self.num_scales}")
+                single_scale[b] = single_scale[b] + getattr(
+                    self, f"all_scales_pos_emb_{s + self.num_scales}"
                 )
         return x1, x2
+
+    def get_position_encodings(self):
+        """
+        返回所有尺度的位置编码
+        """
+        encodings = []
+        for i in range(2 * self.num_scales):
+            encodings.append(getattr(self, f"all_scales_pos_emb_{i}"))
+        return encodings

@@ -1,11 +1,10 @@
 import math
 import torch
 from pathlib import Path
-import torch.distributed as dist
 import pytorch_lightning as pl
 from pytorch_lightning.tuner.tuning import Tuner
 from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
 from pytorch_lightning.strategies import DDPStrategy
 from loguru import logger as loguru_logger
 
@@ -65,7 +64,7 @@ def main():
 
     # Callbacks
     ckpt_callback = ModelCheckpoint(
-        monitor="auc@10",
+        monitor="auc@20",
         verbose=True,
         save_top_k=5,
         mode="max",
@@ -74,7 +73,8 @@ def main():
         filename="{epoch}-{auc@5:.3f}-{auc@10:.3f}-{auc@20:.3f}",
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
-    callbacks = [ckpt_callback, lr_monitor]
+    device_monitor = DeviceStatsMonitor()
+    callbacks = [ckpt_callback, lr_monitor, device_monitor]
 
     # Torch Lightning Trainer
     trainer = pl.Trainer(
@@ -111,6 +111,7 @@ def main():
         config.TRAINER.WARMUP_TYPE = temp
 
     # Training
+    model.num_devices = trainer.num_devices
     loguru_logger.info("Start training!")
     trainer.fit(model, datamodule=data_module)
 

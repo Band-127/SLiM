@@ -5,6 +5,7 @@ from collections import OrderedDict
 from loguru import logger
 from kornia.geometry.epipolar import numeric
 from kornia.geometry.conversions import convert_points_to_homogeneous
+from sklearn.metrics import auc
 
 
 # --- METRICS ---
@@ -153,18 +154,33 @@ def error_auc(errors, thresholds):
         errors (list): [N,]
         thresholds (list)
     """
-    errors = [0] + sorted(list(errors))
-    recall = list(np.linspace(0, 1, len(errors)))
+    # errors = [0] + sorted(list(errors))
+    # recall = list(np.linspace(0, 1, len(errors)))
 
-    aucs = []
-    thresholds = [5, 10, 20]
+    # aucs = []
+    # thresholds = [5, 10, 20]
+    # for thr in thresholds:
+    #     last_index = np.searchsorted(errors, thr)
+    #     y = recall[:last_index] + [recall[last_index - 1]]
+    #     x = errors[:last_index] + [thr]
+    #     aucs.append(np.trapz(y, x) / thr)
+
+    # return {f"auc@{t}": auc for t, auc in zip(thresholds, aucs)}
+    errors = np.array(errors)
+    sort_idx = np.argsort(errors)
+    errors = errors[sort_idx]
+    recall = (np.arange(len(errors)) + 1) / len(errors)
+    errors = np.r_[0., errors]
+    recall = np.r_[0., recall]
+    
+    aucs = {}
     for thr in thresholds:
         last_index = np.searchsorted(errors, thr)
-        y = recall[:last_index] + [recall[last_index - 1]]
-        x = errors[:last_index] + [thr]
-        aucs.append(np.trapz(y, x) / thr)
-
-    return {f"auc@{t}": auc for t, auc in zip(thresholds, aucs)}
+        y = np.r_[recall[:last_index], recall[last_index-1]]
+        x = np.r_[errors[:last_index], thr]
+        aucs[f"auc@{thr}"] = np.trapz(y, x=x) / thr
+    
+    return aucs
 
 
 def epidist_prec(errors, thresholds, ret_dict=False):
@@ -197,7 +213,6 @@ def aggregate_metrics(metrics, epi_err_thr=5e-4):
     pose_errors = np.max(np.stack([metrics["R_errs"], metrics["t_errs"]]), axis=0)[
         unq_ids
     ]
-    print(pose_errors)
     aucs = error_auc(pose_errors, angular_thresholds)  # (auc@5, auc@10, auc@20)
 
     # matching precision

@@ -1,7 +1,7 @@
 from .resnet import ResNet18_2_4_8, ResNet18_2_4_8_16
 from .resnet_modified import ResNet18_2_4_8_modified, ResNet18_2_4_8_16_modified
-from .resnet_pretrained import ResNet18Pretrained
-from .vssm import VMamba_Feature_Extractor
+from .resnet_pretrained import ResNet18Pretrained, ResNet18Pretrained_with_FPN
+from .vssm import VMamba_Feature_Extractor, VMamba_Feature_Extractor_with_FPN
 
 
 def build_backbone(config):
@@ -24,6 +24,8 @@ def build_backbone(config):
     # ResNet18_pretrained
     elif config["BACKBONE_TYPE"] == "ResNet18_pretrained":
         return ResNet18Pretrained()
+    elif config["BACKBONE_TYPE"] == "ResNet18_pretrained_FPN":
+        return ResNet18Pretrained_with_FPN(config=config)
     # VMamba
     elif config["BACKBONE_TYPE"] == "VMamba_T":
         return VMamba_Feature_Extractor(config=config)
@@ -31,6 +33,12 @@ def build_backbone(config):
         return VMamba_Feature_Extractor(config=config)
     elif config["BACKBONE_TYPE"] == "VMamba_B":
         return VMamba_Feature_Extractor(config=config)
+    elif config["BACKBONE_TYPE"] == "VMamba_T_FPN":
+        return VMamba_Feature_Extractor_with_FPN(config=config)
+    elif config["BACKBONE_TYPE"] == "VMamba_S_FPN":
+        return VMamba_Feature_Extractor_with_FPN(config=config)
+    elif config["BACKBONE_TYPE"] == "VMamba_B_FPN":
+        return VMamba_Feature_Extractor_with_FPN(config=config)
     else:
         raise ValueError(
             f"MODEL.BACKBONE.BACKBONE_TYPE {config['BACKBONE_TYPE']} not supported."

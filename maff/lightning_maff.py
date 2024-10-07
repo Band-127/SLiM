@@ -10,6 +10,9 @@ from torch.optim.lr_scheduler import MultiStepLR, CosineAnnealingLR, Exponential
 import pytorch_lightning as pl
 from pytorch_lightning.profilers.profiler import Profiler
 from pytorch_lightning.profilers import PassThroughProfiler
+import torch.distributed as dist
+from contextlib import contextmanager
+import time
 
 from maff.maff import MAFF
 from maff.utils.supervision import compute_supervision_coarse, compute_supervision_fine
@@ -22,6 +25,24 @@ from utils.metrics import (
 from utils.comm import all_gather, gather
 from utils.misc import flattenList
 from utils.plotting import make_matching_figures
+
+
+@contextmanager
+def sync_time():
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    yield
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+def get_mean_time_across_ranks(local_time):
+    if dist.is_initialized():
+        world_size = dist.get_world_size()
+        all_times = [torch.zeros_like(local_time) for _ in range(world_size)]
+        dist.all_gather(all_times, local_time)
+        return torch.mean(torch.stack(all_times))
+    return local_time
 
 
 class PL_MAFF(pl.LightningModule):
@@ -46,6 +67,8 @@ class PL_MAFF(pl.LightningModule):
         self.pretrained_ckpt = pretrained_ckpt
         self.profiler = profiler or PassThroughProfiler()
         self.dump_dir = dump_dir
+        self.num_devices = None
+        self.first_stage_epochs = config.TRAINER.FIRST_STAGE_EPOCHS
 
         self.maff = MAFF(config=config["MODEL"])
         self.loss = MAFF_Loss(config=config["LOSS"])
@@ -63,6 +86,7 @@ class PL_MAFF(pl.LightningModule):
         self.training_outputs = []
         self.validation_outputs = []
         self.test_outputs = []
+        self.forward_times = []
 
         self.n_vals_plot = max(
             config.TRAINER.N_VAL_PAIRS_TO_PLOT // config.TRAINER.WORLD_SIZE, 1
@@ -163,7 +187,9 @@ class PL_MAFF(pl.LightningModule):
             compute_supervision_coarse(batch, coarse_scale=self.coarse_scale)
 
         with self.profiler.profile("MAFF"):
-            self.maff(batch)
+            start_time = time.perf_counter()
+            self.maff(batch, training=training)
+            end_time = time.perf_counter()
 
         if self.config.LOSS.FINE_WEIGHT is not None:
             with self.profiler.profile("Compute fine supervision"):
@@ -173,6 +199,11 @@ class PL_MAFF(pl.LightningModule):
             with self.profiler.profile("Compute losses"):
                 self.loss(batch)
 
+        # Timer
+        local_time = torch.tensor(end_time - start_time, device=self.device)
+        mean_time = get_mean_time_across_ranks(local_time)
+        batch.update({"forward_time": mean_time.item()})
+        self.forward_times.append(mean_time.item())
         torch.cuda.empty_cache()
 
     def _compute_metrics(self, batch):
@@ -200,10 +231,6 @@ class PL_MAFF(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         self._trainval_inference(batch, training=True)
-
-        if self.global_rank == 0:
-            print(f"Loss :{batch['loss'].item(): .6f}", end="")
-
         # logging
         if (
             self.trainer.global_rank == 0
@@ -211,15 +238,45 @@ class PL_MAFF(pl.LightningModule):
         ):
             # scalars
             for k, v in batch["loss_scalars"].items():
-                self.logger.experiment.add_scalar(f"train/{k}", v, self.global_step)
+                self.logger.experiment.add_scalar(
+                    f"train/{k}", v, self.global_step * self.num_devices
+                )
+
+            # num matches
+            self.logger.experiment.add_scalar(
+                "train/num_matches",
+                batch["num_matches"],
+                self.global_step * self.num_devices,
+            )
+
+            # time
+            self.logger.experiment.add_scalar(
+                "train/forward_time",
+                batch["forward_time"],
+                self.global_step * self.num_devices,
+            )
 
             self.training_outputs.append(batch["loss"])
 
         return {"loss": batch["loss"]}
 
+    def on_train_epoch_start(self):
+        if self.trainer.current_epoch == self.first_stage_epochs:
+            # set fine feature loglikehood supervision to zero
+            self.loss.turn_off_fine_feature_likelihood = True
+            self.loss.turn_off_conf_mask_loss = True
+
     def on_train_epoch_end(self):
         self.training_outputs.clear()
         torch.cuda.empty_cache()
+
+        # time
+        if self.trainer.global_rank == 0 and len(self.forward_times) > 0:
+            avg_forward_time = sum(self.forward_times) / len(self.forward_times)
+            self.logger.experiment.add_scalar(
+                "train/avg_forward_time", avg_forward_time, self.trainer.current_epoch
+            )
+        self.forward_times.clear()
 
     def validation_step(self, batch, batch_idx):
         self._trainval_inference(batch, training=False)
@@ -306,8 +363,16 @@ class PL_MAFF(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         # inference
-        with self.profiler.profile("MAFF"):
-            self.maff(batch)
+        start_time = time.perf_counter()
+        self.maff(batch)
+        end_time = time.perf_counter()
+
+        # Timer
+        local_time = torch.tensor(end_time - start_time, device=self.device)
+        mean_time = get_mean_time_across_ranks(local_time)
+        batch.update({"forward_time": mean_time.item()})
+        self.forward_times.append(mean_time.item())
+        torch.cuda.empty_cache()
 
         # metrics
         ret_dict, rel_pair_names = self._compute_metrics(batch)
@@ -354,6 +419,10 @@ class PL_MAFF(pl.LightningModule):
                 )
 
         if self.trainer.global_rank == 0:
+            # time
+            if len(self.forward_times) > 0:
+                avg_forward_time = self.calculate_trimmed_mean(self.forward_times)
+                print(f"Avg forward time: {avg_forward_time*1000: 8.4}ms")
             print(self.profiler.summary())
             val_metrics_4tb = aggregate_metrics(
                 metrics, self.config.TRAINER.EPI_ERR_THR
@@ -363,3 +432,12 @@ class PL_MAFF(pl.LightningModule):
                 np.save(Path(self.dump_dir) / "MAFF_pred_eval", dumps)
 
         self.test_outputs.clear()
+
+    @staticmethod
+    def calculate_trimmed_mean(_list):
+        n = len(_list)
+        trim_count = int(0.1 * n)
+        sorted_list = sorted(_list)
+        trimmed_list = sorted_list[trim_count:-trim_count]
+        avg = sum(trimmed_list) / len(trimmed_list)
+        return avg
