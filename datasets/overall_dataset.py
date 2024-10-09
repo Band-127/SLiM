@@ -11,7 +11,7 @@ import pytorch_lightning as pl
 
 from datasets.megadepth import MegaDepthDataset
 from datasets.sampler import RandomConcatSampler
-from utils.augment import build_augmentor
+from utils.augment import get_augmentor_builder
 
 
 class MAFF_Dataset(pl.LightningDataModule):
@@ -56,7 +56,7 @@ class MAFF_Dataset(pl.LightningDataModule):
         self._val_dataloader = None
         self._test_dataloader = None
         ## Augmentor
-        self.augmentor = build_augmentor(config.DATASET.AUGMENTATION_TYPE)
+        self.augmentor_builder = get_augmentor_builder(config.DATASET.AUGMENTATION_TYPE)
 
         # 2, Read all npz names stated in list
         if self.mode == "train":
@@ -100,14 +100,14 @@ class MAFF_Dataset(pl.LightningDataModule):
                         MegaDepthDataset(
                             root_dir=self.train_data_root,
                             npz_path=npz_path,
-                            mode=self.mode,
+                            mode="train",
                             min_overlap_score=self.min_overlap_score,
                             img_resize=self.megadapth_img_resize,
                             df=self.megadepth_division_factor,
                             img_padding=self.megadepth_image_padding,
                             depth_padding=self.megadepth_depth_padding,
                             coarse_scale=self.megadepth_coarse_scale,
-                            augmentor=self.augmentor,
+                            augmentor_builder=self.augmentor_builder,
                         )
                     )
             self.train_dataset = ConcatDataset(datasets)
@@ -123,7 +123,7 @@ class MAFF_Dataset(pl.LightningDataModule):
                         MegaDepthDataset(
                             root_dir=self.val_data_root,
                             npz_path=npz_path,
-                            mode=self.mode,
+                            mode="val",
                             min_overlap_score=self.min_overlap_score,
                             img_resize=self.megadapth_img_resize,
                             df=self.megadepth_division_factor,

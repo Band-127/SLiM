@@ -14,7 +14,6 @@ from maff.utils.channel_alignment import ChannelAlignment
 from maff.utils.conf_mask_head import ConfMaskHead
 from maff.utils.pixel_shuffle_head import PixelShuffleHead
 from maff.utils.fine_refinement import FineRefinement
-from maff.utils.coord_refinement import CoordRefinementHead
 
 
 class MAFF(nn.Module):
@@ -37,7 +36,6 @@ class MAFF(nn.Module):
         # some refinement configurations
         self.pixel_shuffle_refinement = config["PIXEL_SHUFFLE_REFINEMENT"]
         self.fine_refinement = config["FINE_REFINEMENT"]
-        self.coord_refinement = config["COORD_REFINEMENT"]
 
         # 1. Pyramid feature backbone
         self.feature_backbone = build_backbone(config["BACKBONE"])
@@ -101,18 +99,6 @@ class MAFF(nn.Module):
             else None
         )
 
-        # 7. Coordinate refinement
-        self.coord_refinement_head = (
-            CoordRefinementHead(
-                num_layers=config["COORD_REFINEMENT"]["NUM_LAYER"],
-                inner_expansion=config["COORD_REFINEMENT"]["INNER_EXPANSION"],
-                conv_dim=config["COORD_REFINEMENT"]["CONV_DIM"],
-                delta=config["COORD_REFINEMENT"]["DELTA"],
-                using_mamba2=config["COORD_REFINEMENT"]["USING_MAMBA2"],
-            )
-            if self.coord_refinement
-            else None
-        )
         # 8. Confidence mask head
         self.conf_mask_head = ConfMaskHead(self.d_model)
 
@@ -375,7 +361,6 @@ class MAFF(nn.Module):
             }
         )
 
-    @torch.enable_grad()
     def _fine_matching(self, data: dict):
         feat0 = data["feat0_f"]
         feat1 = data["feat1_f"]
@@ -489,7 +474,6 @@ class MAFF(nn.Module):
             }
         )
 
-    @torch.enable_grad()
     def _fine_matching_with_pixel_shuffle(self, data: dict):
         feat0 = data["feat0_f"]
         feat1 = data["feat1_f"]
@@ -574,13 +558,7 @@ class MAFF(nn.Module):
             coarse_scale, coarse_scale, True, window_heatmap.device
         ).reshape(1, -1, 2)  # [1, WW, 2]
 
-        # 6. Coordinate refinement
-        if self.coord_refinement:
-            coords_normalized = self.coord_refinement_head(
-                coord=coords_normalized, batch_idx=b_idx_c
-            )
-
-        # 7. Compute absolute coordinates, coarse coor + fine coor * scale
+        # 6. Compute absolute coordinates, coarse coor + fine coor * scale
         with torch.no_grad():
             fine_coord_0 = data["coarse_coord_0"]
             scale1 = data["scale1"][b_idx_c] if "scale1" in data else 1
@@ -588,7 +566,7 @@ class MAFF(nn.Module):
                 "coarse_coord_1"
             ]
 
-        # 8. Compute std over <x, y> (used in loss)
+        # 7. Compute std over <x, y> (used in loss)
         var = (
             torch.sum(
                 grid_normalized**2 * window_heatmap.view(-1, coarse_scale**2, 1), dim=1

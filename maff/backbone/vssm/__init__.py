@@ -161,6 +161,56 @@ class VMamba_Feature_Extractor_with_FPN(nn.Module):
         return self.backbone.flops(shape, verbose)
 
 
+class VMamba_Feature_Extractor_cropped(nn.Module):
+    def __init__(self, config):
+        super(VMamba_Feature_Extractor_cropped, self).__init__()
+        if config["BACKBONE_TYPE"] == "VMamba_T":
+            self.backbone = build_pretrained_VMamba_T(config)
+        elif config["BACKBONE_TYPE"] == "VMamba_S":
+            self.backbone = build_pretrained_VMamba_S(config)
+        elif config["BACKBONE_TYPE"] == "VMamba_B":
+            self.backbone = build_pretrained_VMamba_B(config)
+        else:  # Default to Tiny
+            self.backbone = build_pretrained_VMamba_T(config)
+
+        # remove classifier and last layer
+        del self.backbone.classifier
+        self.backbone.layers.pop(-1)
+
+        # Add a 1-channel grayscale to 3-channel grayscale conv
+        self.conv1to3 = conv1x1(1, 3)
+        with torch.no_grad():
+            self.conv1to3.weight.fill_(1.0)
+
+        # Add a pixel shuffle layer to extract 1/2 scale features
+        self.pixel_shuffle = nn.PixelShuffle(2)
+
+    def forward(self, x):
+        features = []
+        # patch embed
+        x = self.conv1to3(x)
+        x = self.backbone.patch_embed(x)
+        features.append(self.pixel_shuffle(x))
+        # pos embed
+        if self.backbone.pos_embed is not None:
+            pos_embed = (
+                self.backbone.pos_embed.permute(0, 2, 3, 1)
+                if not self.backbone.channel_first
+                else self.backbone.pos_embed
+            )
+            x = x + pos_embed
+        # forward
+        for layer in self.backbone.layers:
+            x = layer.blocks(x)
+            features.append(x)
+            x = layer.downsample(x)
+
+        return features
+
+    def flops(self, shape=(3, 224, 224), verbose=True):
+        return self.backbone.flops(shape, verbose)
+
+
 def build_pretrained_VMamba_T(config):
     model = VSSM(
         depths=[2, 2, 8, 2],

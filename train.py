@@ -95,7 +95,7 @@ def main():
     if config.TRAINER.FIND_LR:
         # Finding best LR with linear progression
         temp = config.TRAINER.WARMUP_TYPE
-        config.TRAINER.WARMUP_TYPE = "constant"     # set to constant to find lr
+        model.num_devices = n_gpu_available
         tuner = Tuner(trainer)
         lr_finder = tuner.lr_find(
             model=model,

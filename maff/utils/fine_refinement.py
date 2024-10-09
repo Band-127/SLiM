@@ -30,6 +30,12 @@ class FineRefinement(nn.Module):
             ]
         )
 
+        with torch.no_grad():
+            for m in self.modules():
+                if isinstance(m, nn.LayerNorm):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+
     def forward(
         self, x0: torch.Tensor, x1: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:

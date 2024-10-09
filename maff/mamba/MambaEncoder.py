@@ -362,6 +362,11 @@ class MultiScaleMambaEncoder(nn.Module):
 
         self.layers = nn.ModuleList(self.layers)
 
+        for m in self.modules():
+            if isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
     def forward(
         self,
         x0: List[torch.Tensor],

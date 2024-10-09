@@ -60,10 +60,10 @@ class MAFFAug(object):
                 A.MotionBlur(p=0.25),
                 A.ColorJitter(
                     p=0.5,
-                    brightness=(0.6, 1.4),
-                    contrast=(0.6, 1.4),
-                    saturation=(0.6, 1.4),
-                    hue=(-0.2, 0.2),
+                    brightness=0.5,
+                    contrast=0.5,
+                    saturation=0.5,
+                    hue=0.5,
                 ),
                 A.RandomRain(p=0.1),  # random occlusion
                 A.RandomSunFlare(p=0.1),
@@ -87,3 +87,16 @@ def build_augmentor(method=None, **kwargs):
         return None
     else:
         raise ValueError(f"Invalid augmentation method: {method}")
+    
+def get_augmentor_builder(method=None, **kwargs):
+    if method == "dark":
+        return DarkAug
+    elif method == "mobile":
+        return MobileAug
+    elif method == "maff":
+        return MAFFAug
+    elif method is None:
+        return None
+    else:
+        raise ValueError(f"Invalid augmentation method: {method}")
+

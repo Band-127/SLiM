@@ -364,7 +364,8 @@ class PL_MAFF(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         # inference
         start_time = time.perf_counter()
-        self.maff(batch)
+        with torch.inference_mode(True):
+            self.maff(batch)
         end_time = time.perf_counter()
 
         # Timer

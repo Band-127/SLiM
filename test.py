@@ -17,11 +17,13 @@ loguru_logger = get_rank_zero_only_logger(loguru_logger)
 
 def main():
     latest_ckpt_path = (
-        "logs/tb_logs/MegaDepth_640_(0, 1, 1, 1, 1)_8_2_M2_VMamba_T_FPN_PD/version_0"
+        "logs/tb_logs/MegaDepth_640_(0, 1, 1, 1, 1)_8_4_M2_VMamba_T_PDF/version_0"
     )
     latest_ckpt = "checkpoints/last.ckpt"
     devices = "5,7"
     ransac_thres = 0.2
+    coarse_thres = 0.5
+    image_size = 800
 
     sys.path.append(latest_ckpt_path)
     get_cfg_defaults = importlib.import_module("config").get_cfg_defaults
@@ -56,6 +58,8 @@ def main():
     config.MODEL.COARSE_MATCHING.MAX_MATCHES = 10000
     # lower the ransac pixel threshold for better performance
     config.TRAINER.RANSAC_PIXEL_THR = ransac_thres
+    config.MODEL.COARSE_MATCHING.THRESHOLD = coarse_thres
+    config.IMAGE_SIZE = config.MODEL.BACKBONE.INPUT_SIZE = config.DATASET.MGDPT_IMG_RESIZE = image_size
 
     # Profiler
     profiler = build_profiler("inference")

@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from collections import OrderedDict
 from mamba_ssm import Mamba, Mamba2
 
 
@@ -30,6 +31,7 @@ class BidirectionalMambaLayer(nn.Module):
         self.in_output_dim: int = in_output_dim
         self.inner_expansion: float = inner_expansion
         self.conv_dim: int = conv_dim
+        self.delta: int = delta
         self.device: torch.device = device
         self.dtype: torch.dtype = dtype
         self.using_mamba2: bool = using_mamba2
@@ -55,6 +57,8 @@ class BidirectionalMambaLayer(nn.Module):
             dtype=self.dtype,
         )
 
+        self.sigmoid = nn.Sigmoid()
+
         # LayerNorm
         self.layer_norm = nn.LayerNorm(in_output_dim)
 
@@ -73,8 +77,8 @@ class BidirectionalMambaLayer(nn.Module):
         xb: torch.Tensor = xf.flip(dims=(-2,))
 
         # 2. Enter mamba layer
-        delta_xf: torch.Tensor = self.mamba_layer_forward(xf)
-        delta_xb: torch.Tensor = self.mamba_layer_backward(xb)
+        delta_xf: torch.Tensor = self.sigmoid(self.mamba_layer_forward(xf))
+        delta_xb: torch.Tensor = self.sigmoid(self.mamba_layer_backward(xb))
 
         # 3. Fuse
         delta_x = 0.5 * (delta_xf + delta_xb.flip(dims=(-2,)))
@@ -110,20 +114,33 @@ class CoordRefinementHead(nn.Module):
         self.dtype = dtype
 
         self.mamba_layer = nn.Sequential(
-            [
-                BidirectionalMambaLayer(
-                    in_output_dim=2,
-                    inner_expansion=self.inner_expansion,
-                    conv_dim=self.conv_dim,
-                    delta=self.delta,
-                    using_mamba2=self.using_mamba2,
-                )
-                for _ in range(self.num_layers)
-            ]
+            OrderedDict(
+                [
+                    (
+                        f"layer_{i}",
+                        BidirectionalMambaLayer(
+                            in_output_dim=2,
+                            inner_expansion=self.inner_expansion,
+                            conv_dim=self.conv_dim,
+                            delta=self.delta,
+                            using_mamba2=self.using_mamba2,
+                        ),
+                    )
+                    for i in range(self.num_layers)
+                ]
+            )
         )
+
+        with torch.no_grad():
+            for m in self.modules():
+                if isinstance(m, nn.LayerNorm):
+                    nn.init.constant_(m.weight, 0.01) # set weight to a small value to supress delta 
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, coord: torch.Tensor, batch_idx: torch.Tensor) -> torch.Tensor:
         sorted_batch_unique = batch_idx.unique(sorted=True)
         for b_idx in sorted_batch_unique:
-            coord[batch_idx == b_idx] = self.mamba_layer(coord[batch_idx == b_idx])
+            coord[batch_idx == b_idx] = self.mamba_layer(
+                coord[batch_idx == b_idx].unsqueeze(0)
+            ).squeeze(0)
         return coord

@@ -223,7 +223,9 @@ def spvs_fine(data, config):
     """
     Update:
         data (dict):{
-            "expec_f_gt": [M, 2]}
+            "coord_offset_f_gt": [M, 2],
+            "sim_matrix_f_gt": [M, W, W]
+        }
     """
     device = data["image0"].device
     # 1. misc
@@ -245,7 +247,7 @@ def spvs_fine(data, config):
         else config["MODEL"]["FINE_SCALE"]
     )
     scale = scale * data["scale1"][b_ids] if "scale1" in data else scale
-    # `expec_f_gt` might exceed the window, i.e. abs(*) > 1, which would be filtered later
+    # `coord_offset_f_gt` might exceed the window, i.e. abs(*) > 1, which would be filtered later
     expec_f_gt = (
         (w_pt0_i[b_ids, i_ids] - pt1_i[b_ids, j_ids]) / scale / radius
     )  # [M, 2]
