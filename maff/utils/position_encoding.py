@@ -205,7 +205,7 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
 
     def get_position_encodings(self):
         """
-        返回所有尺度的位置编码
+        Return position encodings for all scales
         """
         encodings = []
         for i in range(2 * self.num_scales):

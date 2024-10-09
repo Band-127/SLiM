@@ -14,10 +14,17 @@ from maff.utils.channel_alignment import ChannelAlignment
 from maff.utils.conf_mask_head import ConfMaskHead
 from maff.utils.pixel_shuffle_head import PixelShuffleHead
 from maff.utils.fine_refinement import FineRefinement
+from maff.utils.any_input_identity import AnyInputIdentity
+from maff.utils.coarse_encoder import CoarseEncoder
+from maff.utils.fine_encoder import FineEncoder
 
 
 class MAFF_v2(nn.Module):
     def __init__(self, config: CN):
+        """
+        Args:
+            config (CN): root/model configuration
+        """
         super(MAFF_v2, self).__init__()
 
         self.config = config
@@ -26,16 +33,18 @@ class MAFF_v2(nn.Module):
         self.d_model = config["DIMENSION"]
         self.scales_selection = config["SCALES_SELECTION"]
         self.coarse_scale_idx = config["COARSE_SCALE_IDX"]
-        self.fine_scale_idx = config["FINE_SCALE_IDX"]
         self.coarse_scale = config["COARSE_SCALE"]
-        self.fine_scale = config["FINE_SCALE"]
+        self.fine_scale = config["BACKBONE"]["RESOLUTION"][0]
         self.coarse_match_thres = config["COARSE_MATCHING"]["THRESHOLD"]
         self.max_coarse_matches = config["COARSE_MATCHING"]["MAX_MATCHES"]
         self.debug = config["DEBUG"]
 
         # some refinement configurations
+        self.disable_pe = config["DISABLE_PE"]
         self.pixel_shuffle_refinement = config["PIXEL_SHUFFLE_REFINEMENT"]
-        self.fine_refinement = config["FINE_REFINEMENT"]
+
+        # trainable_parameters
+        self.coarse_temperature = nn.Parameter(torch.tensor(0.1))
 
         # 1. Pyramid feature backbone
         self.feature_backbone = build_backbone(config["BACKBONE"])
@@ -48,59 +57,597 @@ class MAFF_v2(nn.Module):
                 dtype=self.dtype,
             )
             if "FPN" not in config["BACKBONE"]["BACKBONE_TYPE"]
-            else None
+            else nn.Identity()
         )
 
         # 3. PE
-        self.pe = DualMultiScaleSinePositionalEncoding(
-            d_model=self.d_model,
-            max_hw=config["BACKBONE"]["INPUT_SIZE"],
-            scales=[1 / i for i in config["BACKBONE"]["RESOLUTION"]],
-            dtype=self.dtype,
-        )
-
-        # 4. Mamba fusion encoder or Transformer fusion encoder
-        if config["FUSION_TYPE"] == "mamba":
-            self.fusion_encoder = MultiScaleMambaEncoder(
-                in_output_dim=self.d_model,
-                inner_expansion=config["MAMBA_FUSION"]["INNER_EXPANSION"],
-                conv_dim=config["MAMBA_FUSION"]["CONV_DIM"],
-                delta=config["MAMBA_FUSION"]["DELTA"],
+        self.pe = (
+            DualMultiScaleSinePositionalEncoding(
+                d_model=self.d_model,
+                max_hw=config["BACKBONE"]["INPUT_SIZE"],
+                scales=[1 / i for i in config["BACKBONE"]["RESOLUTION"]],
                 dtype=self.dtype,
-                layer_types=config["MAMBA_FUSION"]["LAYER_TYPES"],
-                using_mamba2=config["MAMBA_FUSION"]["USING_MAMBA2"],
-                scales_selection=self.scales_selection,
             )
-        elif config["FUSION_TYPE"] == "transformer":
-            self.fusion_encoder = LocalFeatureTransformer(
-                config=config["TRANSFORMER_FUSION"]
-            )
-        elif config["FUSION_TYPE"] is None:
-            self.fusion_encoder = None
+            if not self.disable_pe
+            else AnyInputIdentity()
+        )
 
-        # 5. Fine Refinement
-        self.fine_refinement_encoder = (
-            FineRefinement(
+        # 4. Coarse encoder
+        self.coarse_encoder = (
+            CoarseEncoder(
                 in_output_dim=self.d_model,
-                num_layers=config["FINE_REFINEMENT_MODEL"]["NUM_LAYER"],
-                inner_expansion=config["FINE_REFINEMENT_MODEL"]["INNER_EXPANSION"],
-                conv_dim=config["FINE_REFINEMENT_MODEL"]["CONV_DIM"],
-                delta=config["FINE_REFINEMENT_MODEL"]["DELTA"],
-                using_mamba2=config["FINE_REFINEMENT_MODEL"]["USING_MAMBA2"],
+                num_layers=config["COARSE_ENCODER"]["NUM_LAYERS"],
+                inner_expansion=config["COARSE_ENCODER"]["INNER_EXPANSION"],
+                conv_dim=config["COARSE_ENCODER"]["CONV_DIM"],
+                delta=config["COARSE_ENCODER"]["DELTA"],
+                using_mamba2=config["COARSE_ENCODER"]["USING_MAMBA2"],
             )
-            if self.fine_refinement
-            else None
+            if config["COARSE_ENCODER"]["NUM_LAYERS"] > 0
+            else AnyInputIdentity()
         )
 
-        # 6. Pixel shuffle head
-        self.pixel_shuffle_head = (
-            PixelShuffleHead(self.d_model, config["FINE_SCALE"])
-            if self.pixel_shuffle_refinement
-            else None
-        )
-
-        # 8. Confidence mask head
+        # 5. Confidence score mask head, used to generate confidence/saliency score for coarse matching
         self.conf_mask_head = ConfMaskHead(self.d_model)
 
-    def forward(self, data):
-        pass
+        # 6. Fine encoder
+        self.fine_encoder = (
+            FineEncoder(
+                in_output_dim=self.d_model,
+                num_layers=config["FINE_ENCODER"]["NUM_LAYERS"],
+                inner_expansion=config["FINE_ENCODER"]["INNER_EXPANSION"],
+                conv_dim=config["FINE_ENCODER"]["CONV_DIM"],
+                delta=config["FINE_ENCODER"]["DELTA"],
+                using_mamba2=config["FINE_ENCODER"]["USING_MAMBA2"],
+            )
+            if config["FINE_ENCODER"]["NUM_LAYERS"] > 0
+            else AnyInputIdentity()
+        )
+
+        # 7. Pixel shuffle
+        self.pixel_shuffle_head = (
+            PixelShuffleHead(self.d_model, self.fine_scale)
+            if self.pixel_shuffle_refinement
+            else nn.Identity()
+        )
+        self.scale_after_pixel_shuffle = (
+            1 if self.pixel_shuffle_refinement else self.fine_scale
+        )
+
+    def forward(self, data: dict, training: bool = False):
+        """
+        Forward function of MAFF
+        Input:
+            data (dict): {
+                "image0": (torch.Tensor): (B, 1, H, W)
+                "image1": (torch.Tensor): (B, 1, H, W)
+                "mask0": (torch.Tensor, optional): (B, H, W): '0' indicates a padded position
+                "mask1": (torch.Tensor, optional): (B, H, W): '0' indicates a padded position
+                "scale0": (torch.Tensor, optional): (B, 2), Megadepth only, absolute scale from input size to original size
+                "scale1": (torch.Tensor, optional): (B, 2), Megadepth only, absolute scale from input size to original size
+
+                "batch_size": (int)
+                "hw0_i": (torch.Size): Hi0, Wi0: input shape 0
+                "hw1_i": (torch.Size): Hi1, Wi1: input shape 1
+                "coarse_scale" (float): hw0_i / hw0_c
+                "fine_scale" (float): hw0_i / hw0_f
+
+                (Training only)
+                "spv_b_ids" (torch.Tensor): (M)
+                "spv_i_ids" (torch.Tensor): (M)
+                "spv_j_ids" (torch.Tensor): (M)
+            }
+        Output:
+            data (dict): {
+                "feat0_all": (List[torch.Tensor]): S x [B, C, H, W]: feature pyramid of image 0
+                "feat1_all": (List[torch.Tensor]): S x [B, C, H, W]: feature pyramid of image 1
+                "feat0_c": (torch.Tensor): (B, C, Hc0, Wc0): coarse feature 0
+                "feat1_c": (torch.Tensor): (B, C, Hc1, Wc1): coarse feature 1
+                "hw0_c": (torch.Size): Hc0, Wc0: coarse feature shape 0
+                "hw1_c": (torch.Size): Hc1, Wc1: coarse feature shape 1
+                "conf_mask0": (torch.Tensor): (B, Lc0) coarse confidence mask, used to refine coarse match in similarity matrix
+                "conf_mask1": (torch.Tensor): (B, Lc1) coarse confidence mask, used to refine coarse match in similarity matrix
+
+                "sim_matrix": (torch.Tensor): (B, Lc0, Lc1) coarse similarity matrix formed in coarse matching
+                "num_matches": (int): number of matches
+                "b_idx_c": (torch.Tensor): (M) coarse match index, batch, in coarse coordinate
+                "i_idx_c": (torch.Tensor): (M) coarse match index, in image0, in coarse coordinate
+                "j_idx_c": (torch.Tensor): (M) coarse match index, in image1, in coarse coordinate
+                "coarse_coord_0": (torch.Tensor): (M, 2) coarse matched coords in image 0, in absolute coordinate
+                "coarse_coord_1": (torch.Tensor): (M, 2) coarse matched coords in image 1, in absolute coordinate
+
+                "feat0_f": (torch.Tensor): (M, C, Hw, Ww): fine feature 0
+                "feat1_f": (torch.Tensor): (M, C, Hw, Ww): fine feature 1
+                "fine_window_size" (int): Hw or Ww which is the window size of fine features
+
+                "fine_coord_0": (torch.Tensor): (M, 2) fine matched coords in image 0, in absolute coordinate
+                "fine_coord_1": (torch.Tensor): (M, 2) fine matched coords in image 1, in absolute coordinate
+                "sim_matrix_f": (torch.Tensor): (M, W, W) fine similarity matrix formed in fine matching
+                "coord_offset_f": (torch.Tensor): (M, 2) fine matched coords offset(normalized) in image 1
+                "std": (torch.Tensor): (M)
+            }
+        Args:
+            data (dict): input data
+            training (bool, optional): training/testing. Defaults to False.
+        """
+        data.update(
+            {
+                "batch_size": data["image0"].shape[0],
+                "hw0_i": data["image0"].shape[2:],
+                "hw1_i": data["image1"].shape[2:],
+                "coarse_scale": self.coarse_scale,
+                "fine_scale": self.fine_scale,
+            }
+        )
+        if training:
+            return self._forward_train(data)
+        else:
+            return self._forward_test(data)
+
+    @torch.no_grad()
+    def _forward_test(self, data: dict):
+        # 1. Feature extraction
+        x0, x1 = (
+            self.feature_backbone(data["image0"]),
+            self.feature_backbone(data["image1"]),
+        )  # S, [B x C x H x W]
+        mask0, mask1 = (
+            (
+                data["mask0"].flatten(-2),
+                data["mask1"].flatten(-2),
+            )
+            if "mask0" in data
+            else (None, None)
+        )  # Flattened, [B x L]
+
+        # 2. Feature channel alignment, align the channel dim of features
+        x0, x1 = (
+            self.feature_channel_alignment(x0),
+            self.feature_channel_alignment(x1),
+        )  # S, [B x C x H x W]
+
+        # 3. PE
+        x0, x1 = self.pe(x0, x1)  # S x [B x C x H x W]
+
+        # 4. Coarse encoder
+        coarse_x0, coarse_x1 = self.coarse_encoder(
+            x0[self.coarse_scale_idx], x1[self.coarse_scale_idx]
+        )
+
+        # 5. Conf score mask generation
+        conf_mask0 = self.conf_mask_head(coarse_x0)
+        conf_mask1 = self.conf_mask_head(coarse_x1)
+
+        # Update coarse features, shapes and conf mask
+        data.update(
+            {
+                "feat0_all": x0,  # S x [B x C x H x W]
+                "feat1_all": x1,  # S x [B x C x H x W]
+                "feat0_c": coarse_x0,  # B, C, Hc0, Wc0
+                "feat1_c": coarse_x1,  # B, C, Hc1, Wc1
+                "hw0_c": coarse_x0.shape[2:],
+                "hw1_c": coarse_x1.shape[2:],
+                "conf_mask0": conf_mask0,
+                "conf_mask1": conf_mask1,
+            }
+        )
+
+        # 6. Coarse matching
+        self._coarse_correlation(
+            data=data,
+            feat0_c=coarse_x0,
+            feat1_c=coarse_x1,
+            mask0=mask0,
+            mask1=mask1,
+            conf_mask0=conf_mask0,
+            conf_mask1=conf_mask1,
+        )  # (B x HW x HW)
+        self._get_coarse_coord_test(data=data)  # Get coord from sim matrix
+
+        # 7. Fine matching
+        feat0_quadtrees, feat1_quadtrees, finest_window_size = (
+            self._extraxt_fine_features(data=data)
+        )  # [M x (f_coarse + 4*f_fine_0 + 16*f_fine_1 + ...) x C], from coarse to fine scale
+        fine_x0, fine_x1 = self.fine_encoder(
+            feat0_quadtrees, feat1_quadtrees, finest_window_size
+        )
+        data.update(
+            {
+                "feat0_f": fine_x0,  # M, C, H, W
+                "feat1_f": fine_x1,  # M, C, H, W
+                "fine_window_size": finest_window_size,  # int
+            }
+        )
+        self._fine_matching(data=data)
+
+    def _forward_train(self, data: dict):
+        # 1. Feature extraction
+        x0, x1 = (
+            self.feature_backbone(data["image0"]),
+            self.feature_backbone(data["image1"]),
+        )  # S, [B x C x H x W]
+        mask0, mask1 = (
+            (
+                data["mask0"].flatten(-2),
+                data["mask1"].flatten(-2),
+            )
+            if "mask0" in data
+            else (None, None)
+        )  # Flattened, [B x L]
+
+        # 2. Feature channel alignment, align the channel dim of features
+        x0, x1 = (
+            self.feature_channel_alignment(x0),
+            self.feature_channel_alignment(x1),
+        )  # S, [B x C x H x W]
+
+        # 3. PE
+        x0, x1 = self.pe(x0, x1)  # S x [B x C x H x W]
+
+        # 4. Coarse encoder
+        coarse_x0, coarse_x1 = x0[self.coarse_scale_idx], x1[self.coarse_scale_idx] = (
+            self.coarse_encoder(x0[self.coarse_scale_idx], x1[self.coarse_scale_idx])
+        )
+
+        # 5. Conf score mask generation
+        conf_mask0 = self.conf_mask_head(coarse_x0)
+        conf_mask1 = self.conf_mask_head(coarse_x1)
+
+        # Update coarse features, shapes and conf mask
+        data.update(
+            {
+                "feat0_all": x0,  # S x [B x C x H x W]
+                "feat1_all": x1,  # S x [B x C x H x W]
+                "feat0_c": coarse_x0,  # B, C, Hc0, Wc0
+                "feat1_c": coarse_x1,  # B, C, Hc1, Wc1
+                "hw0_c": coarse_x0.shape[2:],
+                "hw1_c": coarse_x1.shape[2:],
+                "conf_mask0": conf_mask0,
+                "conf_mask1": conf_mask1,
+            }
+        )
+
+        # 6. Coarse matching
+        self._coarse_correlation(
+            data=data,
+            feat0_c=coarse_x0,
+            feat1_c=coarse_x1,
+            mask0=mask0,
+            mask1=mask1,
+            conf_mask0=conf_mask0,
+            conf_mask1=conf_mask1,
+        )  # (B x HW x HW)
+        self._get_coarse_coord_train(data=data)  # Get all coord from gt
+
+        # 7. Fine matching
+        feat0_quadtrees, feat1_quadtrees, finest_window_size = (
+            self._extraxt_fine_features(data=data)
+        )  # [M x (f_coarse + 4*f_fine_0 + 16*f_fine_1 + ...) x C], from coarse to fine scale
+        fine_x0, fine_x1 = self.fine_encoder(
+            feat0_quadtrees, feat1_quadtrees, finest_window_size
+        )
+        data.update(
+            {
+                "feat0_f": fine_x0,  # M, C, H, W
+                "feat1_f": fine_x1,  # M, C, H, W
+                "fine_window_size": finest_window_size,  # int
+            }
+        )
+        self._fine_matching(data=data)
+
+    def _coarse_correlation(
+        self,
+        data: dict,
+        feat0_c: torch.Tensor,
+        feat1_c: torch.Tensor,
+        mask0: torch.Tensor = None,
+        mask1: torch.Tensor = None,
+        conf_mask0: torch.Tensor = None,
+        conf_mask1: torch.Tensor = None,
+    ):
+        # 1. Flatten
+        feat0_c = rearrange(feat0_c, "b c h w -> b (h w) c")  # B, Lc0, C
+        feat1_c = rearrange(feat1_c, "b c h w -> b (h w) c")  # B, Lc1, C
+
+        # Divide by C**0.5 to control gradients:
+        # When the feature dimension C is large, dot product results can be very high,
+        # causing softmax gradients to approach zero.
+        # This scaling factor helps keep gradients in a reasonable range, aiding model training.
+        feat0_c, feat1_c = map(lambda x: x / x.shape[-1] ** 0.5, [feat0_c, feat1_c])
+
+        # 2. Full correlation
+        # Similarity matrix without dustbin, using a trainable temperature
+        sim_matrix = (
+            torch.einsum("blc,bsc->bls", feat0_c, feat1_c) / self.coarse_temperature
+        )
+
+        # 3. Multiply the similarity matrix with confidence mask
+        sim_matrix = sim_matrix * conf_mask0.unsqueeze(-1) * conf_mask1.unsqueeze(-2)
+
+        # 4. Mask the area on similarity matrix where the mask==False into -inf
+        if mask0 is not None and mask1 is not None:
+            sim_matrix.masked_fill_(
+                ~(mask0.unsqueeze(-1) * mask1.unsqueeze(-2)).bool(), -1e9
+            )
+
+        # 5. Update sim matrix
+        data.update({"sim_matrix": sim_matrix})
+
+    @torch.no_grad()
+    def _get_coarse_coord_train(self, data: dict):
+        b_idx_c = data["spv_b_ids"]
+        i_idx_c = data["spv_i_ids"]
+        j_idx_c = data["spv_j_ids"]
+
+        # Match indices -> coordinates
+        scale0 = (
+            self.coarse_scale * data["scale0"][b_idx_c]
+            if "scale0" in data
+            else self.coarse_scale
+        )
+        scale1 = (
+            self.coarse_scale * data["scale1"][b_idx_c]
+            if "scale1" in data
+            else self.coarse_scale
+        )
+        coarse_coord_0 = (
+            torch.stack(
+                (
+                    (i_idx_c % data["hw0_c"][1]),
+                    (i_idx_c // data["hw0_c"][1]),
+                ),
+                dim=1,
+            )
+            * scale0
+        )
+        coarse_coord_1 = (
+            torch.stack(
+                (
+                    (j_idx_c % data["hw1_c"][1]),
+                    (j_idx_c // data["hw1_c"][1]),
+                ),
+                dim=1,
+            )
+            * scale1
+        )
+
+        data.update(
+            {
+                "b_idx_c": b_idx_c,  # in coarse coordinate
+                "i_idx_c": i_idx_c,  # in coarse coordinate
+                "j_idx_c": j_idx_c,  # in coarse coordinate
+                "coarse_coord_0": coarse_coord_0,  # in absolute coordinate, at the top left cornerof coarse window
+                "coarse_coord_1": coarse_coord_1,  # in absolute coordinate, at the top left corner of coarse window
+                "num_matches": b_idx_c.shape[0],
+            }
+        )
+
+    @torch.no_grad()
+    def _get_coarse_coord_test(self, data: dict):
+        sim_matrix = data["sim_matrix"]
+        conf_matrix = F.softmax(sim_matrix, 1) * F.softmax(sim_matrix, 2)
+        # Get top max_coarse_matches matches with highest confidence
+        top_k = min(self.max_coarse_matches, conf_matrix.numel())
+        flat_conf = conf_matrix.view(-1)
+        top_k_values, top_k_indices = torch.topk(flat_conf, k=top_k)
+
+        # Apply threshold
+        valid_matches = top_k_values > (conf_matrix.max() * self.coarse_match_thres)
+        coarse_match = top_k_indices[valid_matches]
+
+        # Manually calculate original indices
+        b = coarse_match // (conf_matrix.shape[1] * conf_matrix.shape[2])
+        residual = coarse_match % (conf_matrix.shape[1] * conf_matrix.shape[2])
+        i = residual // conf_matrix.shape[2]
+        j = residual % conf_matrix.shape[2]
+
+        coarse_match = torch.stack([b, i, j], dim=-1)
+
+        del conf_matrix  # Free memory
+
+        b_idx_c = coarse_match[:, 0]
+        i_idx_c = coarse_match[:, 1]
+        j_idx_c = coarse_match[:, 2]
+
+        scale0 = (
+            self.coarse_scale * data["scale0"][b_idx_c]
+            if "scale0" in data
+            else self.coarse_scale
+        )
+        scale1 = (
+            self.coarse_scale * data["scale1"][b_idx_c]
+            if "scale1" in data
+            else self.coarse_scale
+        )
+        coarse_coord_0 = (
+            torch.stack(
+                (
+                    (i_idx_c % data["hw0_c"][1]),
+                    (i_idx_c // data["hw0_c"][1]),
+                ),
+                dim=1,
+            )
+            * scale0
+        )
+        coarse_coord_1 = (
+            torch.stack(
+                (
+                    (j_idx_c % data["hw1_c"][1]),
+                    (j_idx_c // data["hw1_c"][1]),
+                ),
+                dim=1,
+            )
+            * scale1
+        )
+
+        data.update(
+            {
+                "b_idx_c": b_idx_c,  # in coarse coordinate
+                "i_idx_c": i_idx_c,  # in coarse coordinate
+                "j_idx_c": j_idx_c,  # in coarse coordinate
+                "coarse_coord_0": coarse_coord_0,  # in absolute coordinate, at the top left cornerof coarse window
+                "coarse_coord_1": coarse_coord_1,  # in absolute coordinate, at the top left corner of coarse window
+                "num_matches": b_idx_c.shape[0],
+            }
+        )
+
+    def _extraxt_fine_features(self, data: dict):
+        # 1. Gather all fine features idx below coarse features and the processed coarse features
+        feat0_fine = data["feat0_all"][
+            self.coarse_scale_idx :: -1
+        ]  # [1/8, 1/4, 1/2] if coarse scale is 1/8
+        feat1_fine = data["feat1_all"][
+            self.coarse_scale_idx :: -1
+        ]  # [1/8, 1/4, 1/2] if coarse scale is 1/8
+        feat_len = len(feat0_fine)
+
+        # 2. Get index of coarse match(top left)
+        coarse_scale = int(data["coarse_scale"])
+        b_idx_c = data["b_idx_c"]
+        absolute_coarse_scale0 = (
+            coarse_scale * data["scale0"][b_idx_c] if "scale0" in data else coarse_scale
+        )
+        absolute_coarse_scale1 = (
+            coarse_scale * data["scale1"][b_idx_c] if "scale1" in data else coarse_scale
+        )
+        coarse_topleft_idx_0 = (
+            data["coarse_coord_0"] / absolute_coarse_scale0
+        )  # torch.Tensor(M x 2)
+        coarse_topleft_idx_1 = (
+            data["coarse_coord_1"] / absolute_coarse_scale1
+        )  # torch.Tensor(M x 2)
+
+        # 3. Extract windows from features, including HxW flattening for all windows
+        feat0_quadtrees = []
+        feat1_quadtrees = []
+        # First scale
+        row_indices = coarse_topleft_idx_0[:, 1].long()
+        col_indices = coarse_topleft_idx_0[:, 0].long()
+        feat0_quadtrees.append(
+            feat0_fine[0][b_idx_c, :, row_indices, col_indices].unsqueeze(
+                1
+            )  # M x 1 x C
+        )
+        row_indices = coarse_topleft_idx_1[:, 1].long()
+        col_indices = coarse_topleft_idx_1[:, 0].long()
+        feat1_quadtrees.append(
+            feat1_fine[0][b_idx_c, :, row_indices, col_indices].unsqueeze(
+                1
+            )  # M x 1 x C
+        )
+        # Other scales
+        window_size = 2
+        for feat_idx in range(1, feat_len):
+            fine_topleft_idx_0 = coarse_topleft_idx_0 * window_size
+            fine_topleft_idx_1 = coarse_topleft_idx_1 * window_size
+            feat0_quadtrees.append(
+                self._extract_feat_window(
+                    feat0_fine[feat_idx], b_idx_c, fine_topleft_idx_0, window_size
+                )
+            )  # M x (W W) x C
+            feat1_quadtrees.append(
+                self._extract_feat_window(
+                    feat1_fine[feat_idx], b_idx_c, fine_topleft_idx_1, window_size
+                )
+            )  # M x (W W) x C
+            window_size *= 2
+        finest_window_size = int(window_size // 2)
+        # Output: Scales x [M x L x C], from coarse to fine scale
+        feat0_quadtrees = torch.concat(feat0_quadtrees, dim=1)
+        feat1_quadtrees = torch.concat(feat1_quadtrees, dim=1)
+        # Output: [M x (f_coarse + 4*f_fine_0 + 16*f_fine_1 + ...) x C], from coarse to fine scale
+        return feat0_quadtrees, feat1_quadtrees, finest_window_size
+
+    @staticmethod
+    def _extract_feat_window(
+        _feat: torch.Tensor, b_idx: torch.Tensor, coord: torch.Tensor, window_size: int
+    ):
+        # Calculate row and column indices
+        row_indices = coord[:, 1].round().long()
+        col_indices = coord[:, 0].round().long()
+
+        # Create grid indices
+        row_offsets = torch.arange(window_size, device=_feat.device, dtype=torch.long)
+        col_offsets = torch.arange(window_size, device=_feat.device, dtype=torch.long)
+
+        row_indices = row_indices.unsqueeze(1) + row_offsets.unsqueeze(0)
+        col_indices = col_indices.unsqueeze(1) + col_offsets.unsqueeze(0)
+
+        # Extract windows using advanced indexing
+        windows = _feat[
+            b_idx[:, None, None], :, row_indices[:, :, None], col_indices[:, None, :]
+        ]
+
+        # Rearrange to [M x (H W) x C]
+        windows = rearrange(windows, "m h w c -> m (h w) c")
+
+        return windows
+
+    def _fine_matching(self, data: dict):
+        feat0 = data["feat0_f"]  # M, C, H, W
+        feat1 = data["feat1_f"]  # M, C, H, W
+        b_idx_c = data["b_idx_c"]  # M
+        C = feat0.shape[-1]
+
+        # 1. Pixel shuffle if exists
+        feat0 = self.pixel_shuffle_head(feat0)
+        feat1 = self.pixel_shuffle_head(feat1)
+
+        # 2. Picked top left corner from feat0
+        feat0_picked = feat0[:, :, 0, 0]
+
+        # 3. Correlation between both feature
+        window_heatmap = torch.einsum("mc,mchw->mhw", feat0_picked, feat1)
+        # Divide by C**0.5 to control gradients:
+        # When the feature dimension C is large, dot product results can be very high,
+        # causing softmax gradients to approach zero.
+        # This scaling factor helps keep gradients in a reasonable range, aiding model training.
+        window_heatmap = self.softmax2d((window_heatmap / (C**0.5)))
+
+        # 4. Compute coordinate offsets from heatmap
+        window_size = window_heatmap.shape[-1]
+        window_radius = window_size / 2
+        coords_normalized = dsnt.spatial_expectation2d(window_heatmap[None], True)[0]
+        grid_normalized = create_meshgrid(
+            window_size, window_size, True, window_heatmap.device
+        ).reshape(1, -1, 2)  # [1, WW, 2]
+
+        # 6. Compute absolute coordinates, coarse coor + fine coor * scale
+        fine_coord_0 = data["coarse_coord_0"]
+        scale1 = (
+            data["scale1"][b_idx_c] * self.scale_after_pixel_shuffle
+            if "scale1" in data
+            else self.scale_after_pixel_shuffle
+        )
+        fine_coord_1 = (coords_normalized * window_radius * scale1) + data[
+            "coarse_coord_1"
+        ]
+
+        # 8. Compute std over <x, y> (used in loss)
+        var = (
+            torch.sum(
+                grid_normalized**2 * window_heatmap.view(-1, window_size**2, 1), dim=1
+            )
+            - coords_normalized**2
+        )  # [M, 2]
+        std = torch.sum(
+            torch.sqrt(torch.clamp(var, min=1e-10)), -1
+        )  # [M]  clamp needed for numerical stability
+
+        data.update(
+            {
+                "fine_coord_0": fine_coord_0,
+                "fine_coord_1": fine_coord_1,
+                "sim_matrix_f": window_heatmap,
+                "coord_offset_f": coords_normalized,
+                "std": std,
+            }
+        )
+
+    @staticmethod
+    def softmax2d(x: torch.Tensor):
+        # x: [M x H x W] -> [M x (H W)]
+        h, w = x.shape[1:]
+        x = x.view(x.shape[0], -1)
+        x = torch.softmax(x, dim=1)
+        x = x.view(x.shape[0], h, w)
+        return x

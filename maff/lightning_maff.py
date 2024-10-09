@@ -14,8 +14,9 @@ import torch.distributed as dist
 from contextlib import contextmanager
 import time
 
-from maff.maff import MAFF
 from maff.utils.supervision import compute_supervision_coarse, compute_supervision_fine
+from maff.maff import MAFF
+from maff.maff_v2 import MAFF_v2
 from maff.loss import MAFF_Loss
 from utils.metrics import (
     compute_symmetrical_epipolar_errors,
@@ -56,7 +57,7 @@ class PL_MAFF(pl.LightningModule):
         """_summary_
 
         Args:
-            config (CN): Root configuration
+            config (CN): root configuration
             pretrained_ckpt (str, optional): Path to pretrained checkpoint if exists. Defaults to None.
             profiler (Profiler, optional): Pytorch Lightning Profiler module. Defaults to None.
             dump_dir (str, optional): Dir to dump testing output. Defaults to None.
@@ -70,7 +71,11 @@ class PL_MAFF(pl.LightningModule):
         self.num_devices = None
         self.first_stage_epochs = config.TRAINER.FIRST_STAGE_EPOCHS
 
-        self.maff = MAFF(config=config["MODEL"])
+        if config["MODEL"]["VERSION"] == "v1":
+            _MAFF = MAFF
+        elif config["MODEL"]["VERSION"] == "v2":
+            _MAFF = MAFF_v2
+        self.maff = _MAFF(config=config["MODEL"])
         self.loss = MAFF_Loss(config=config["LOSS"])
 
         # Read pretrained checkpoint if exists

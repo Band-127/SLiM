@@ -19,7 +19,7 @@ _CN.DUMP_DIR = "dump/maff_baseline_outdoor"
 _CN.DEVICE = CN()
 _CN.DEVICE.ENABLE_GPU = True        # Whether enable GPUs, default true
 _CN.DEVICE.ENABLE_DDP = True        # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "1,2,3,4"          # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.GPU_IDX = "1,2,3,4"      # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
@@ -120,6 +120,7 @@ _CN.PROFILER.PROFILER__NAME = None                  # options: [None, "inference
 _CN.MODEL = CN()
 _CN.MODEL.DEBUG = _CN.DEBUG
 _CN.MODEL.DTYPE = _CN.DTYPE
+_CN.MODEL.VERSION = "v2"                            # options: ["v1", "v2"]
 _CN.MODEL.FUSION_TYPE = None                        # options: ["mamba", "transformer", None], None for no feature fusion
 _CN.MODEL.SCALES_SELECTION = (1, 1, 1, 1)           # E.g. if BACKBONE.RESOLUTION = (2, 4, 8), SCALES_SELECTION = (0, 1, 1), means only 1/4 and 1/8 feature maps are selected for feature fusion
 _CN.MODEL.COARSE_SCALE_IDX = 1
@@ -127,13 +128,17 @@ _CN.MODEL.COARSE_SCALE = None                       # Will be calculated automat
 _CN.MODEL.FINE_SCALE_IDX = 0
 _CN.MODEL.FINE_SCALE = None                         # Will be calculated automatically
 _CN.MODEL.DIMENSION = 256
+_CN.MODEL.USING_MAMBA2 = True
+# refinement
+_CN.MODEL.DISABLE_PE = False                        # Whether using pe before encoder or not
 _CN.MODEL.PIXEL_SHUFFLE_REFINEMENT = True           # Whether using pixel shuffle refinement for fine coordinates generation
 _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT = True         # Whether using depth map to refine conf mask(generate confidence mask from output feature using mlp to mask unwanted area in correlation)
 _CN.MODEL.FINE_REFINEMENT = True                    # Whether using feature refinement network for fine feature
 _CN.MODEL.COORD_REFINEMENT = False                  # Whether using coordinate refinement for fine coordinates generation
+
 # Feature Backbone
 _CN.MODEL.BACKBONE = CN()
-_CN.MODEL.BACKBONE.BACKBONE_TYPE = "ResNet18_pretrained_FPN"
+_CN.MODEL.BACKBONE.BACKBONE_TYPE = "VMamba_T"
 # backbone options: 
 # [
 #   "ResNet18", "ResNet18_modified", "ResNet18_pretrained", 
@@ -145,9 +150,10 @@ _CN.MODEL.BACKBONE.RESOLUTION = (4, 8, 16, 32)                          # option
 _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256, 512)                     # options: (128, 196, 256)(Modified by LoFTR), will automatically set for ResNet18_pretrained and VMamba
 _CN.MODEL.BACKBONE.INPUT_SIZE = _CN.IMAGE_SIZE
 _CN.MODEL.BACKBONE.FPN_OUT_CHANNELS = _CN.MODEL.DIMENSION
+
 # Mamba Feature Fusion
 _CN.MODEL.MAMBA_FUSION = CN()
-_CN.MODEL.MAMBA_FUSION.USING_MAMBA2 = True          # Whether using mamba2 or not
+_CN.MODEL.MAMBA_FUSION.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
 _CN.MODEL.MAMBA_FUSION.INNER_EXPANSION = 2          # Inner dimension expansion rate for mamba, inner dimension=rate*input dimension
 _CN.MODEL.MAMBA_FUSION.CONV_DIM = 3                 # Conv dimension for mamba
 _CN.MODEL.MAMBA_FUSION.DELTA = 16                   # Delta dimension for mamba
@@ -155,6 +161,7 @@ _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER = 0           # number of "self attn." lay
 _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER = 0          # number of "cross attn." layer
 _CN.MODEL.MAMBA_FUSION.LAYER_TYPES = ["self"] * _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER + \
                                      ["cross"] * _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER
+
 # Transformer Feature Fusion (comparison)
 _CN.MODEL.TRANSFORMER_FUSION = CN()
 _CN.MODEL.TRANSFORMER_FUSION.D_MODEL = _CN.MODEL.BACKBONE.LAYER_DIMS[-1]
@@ -162,24 +169,42 @@ _CN.MODEL.TRANSFORMER_FUSION.NHEAD = 8
 _CN.MODEL.TRANSFORMER_FUSION.ATTENTION = "linear"
 _CN.MODEL.TRANSFORMER_FUSION.LAYERS = 1             # number of self+cross attn. layer
 _CN.MODEL.TRANSFORMER_FUSION.LAYER_TYPES = ['self', 'cross'] * _CN.MODEL.TRANSFORMER_FUSION.LAYERS
+
 # Fine Feature Refinement
 _CN.MODEL.FINE_REFINEMENT_MODEL = CN()
 _CN.MODEL.FINE_REFINEMENT_MODEL.INNER_EXPANSION = 2
 _CN.MODEL.FINE_REFINEMENT_MODEL.CONV_DIM = 4
 _CN.MODEL.FINE_REFINEMENT_MODEL.DELTA = 16
 _CN.MODEL.FINE_REFINEMENT_MODEL.NUM_LAYER = 2
-_CN.MODEL.FINE_REFINEMENT_MODEL.USING_MAMBA2 = True
+_CN.MODEL.FINE_REFINEMENT_MODEL.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
+
 # Coordinate Refinement
 _CN.MODEL.COORD_REFINEMENT_MODEL = CN()
 _CN.MODEL.COORD_REFINEMENT_MODEL.INNER_EXPANSION = 256
 _CN.MODEL.COORD_REFINEMENT_MODEL.CONV_DIM = 4
 _CN.MODEL.COORD_REFINEMENT_MODEL.DELTA = 16
 _CN.MODEL.COORD_REFINEMENT_MODEL.NUM_LAYER = 2
-_CN.MODEL.COORD_REFINEMENT_MODEL.USING_MAMBA2 = True
+_CN.MODEL.COORD_REFINEMENT_MODEL.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
+
 # Coarse matching
 _CN.MODEL.COARSE_MATCHING = CN()
 _CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.3
 _CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 2500
+
+# v2 config
+_CN.MODEL.COARSE_ENCODER = CN()
+_CN.MODEL.COARSE_ENCODER.NUM_LAYERS = 2
+_CN.MODEL.COARSE_ENCODER.INNER_EXPANSION = 2
+_CN.MODEL.COARSE_ENCODER.CONV_DIM = 4
+_CN.MODEL.COARSE_ENCODER.DELTA = 16
+_CN.MODEL.COARSE_ENCODER.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
+
+_CN.MODEL.FINE_ENCODER = CN()
+_CN.MODEL.FINE_ENCODER.NUM_LAYERS = 2
+_CN.MODEL.FINE_ENCODER.INNER_EXPANSION = 2
+_CN.MODEL.FINE_ENCODER.CONV_DIM = 4
+_CN.MODEL.FINE_ENCODER.DELTA = 16
+_CN.MODEL.FINE_ENCODER.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
 
 ########    Loss Configurations    ########
 _CN.LOSS = CN()
@@ -238,21 +263,31 @@ _CN.LOGGER = CN()
 FUSION_TYPE_MARK  = "None"
 if _CN.MODEL.FUSION_TYPE == "mamba":
     FUSION_TYPE_MARK = "M"
-    if _CN.MODEL.MAMBA_FUSION.USING_MAMBA2:
+    if _CN.MODEL.USING_MAMBA2:
         FUSION_TYPE_MARK += "2"
 elif _CN.MODEL.FUSION_TYPE == "transformer":
     FUSION_TYPE_MARK = "T"
-
-_CN.LOGGER.LOGGER_NAME = (f"{_CN.DATASET.TRAINVAL_DATA_SOURCE}_{_CN.IMAGE_SIZE}_{_CN.MODEL.SCALES_SELECTION}_") + \
-                        (f"{_CN.MODEL.COARSE_SCALE}_") + \
-                        (f"{_CN.MODEL.FINE_SCALE}_") + \
-                        (f"{FUSION_TYPE_MARK}") + \
-                        (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}_") + \
-                        ("P" if _CN.MODEL.PIXEL_SHUFFLE_REFINEMENT else "") + \
-                        ("D" if _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT else "") + \
-                        ("F" if _CN.MODEL.FINE_REFINEMENT else "") + \
-                        ("C" if _CN.MODEL.COORD_REFINEMENT else "") + \
-                        ("A" if _CN.DATASET.AUGMENTATION_TYPE is not None else "")
+if _CN.MODEL.VERSION == "v1":
+    _CN.LOGGER.LOGGER_NAME = (f"{_CN.DATASET.TRAINVAL_DATA_SOURCE}_{_CN.IMAGE_SIZE}_{_CN.MODEL.SCALES_SELECTION}_") + \
+                            (_CN.MODEL.VERSION + "_") + \
+                            (f"{_CN.MODEL.COARSE_SCALE}_") + \
+                            (f"{_CN.MODEL.FINE_SCALE}_") + \
+                            (f"{FUSION_TYPE_MARK}") + \
+                            (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}_") + \
+                            ("P" if _CN.MODEL.PIXEL_SHUFFLE_REFINEMENT else "") + \
+                            ("D" if _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT else "") + \
+                            ("F" if _CN.MODEL.FINE_REFINEMENT else "") + \
+                            ("C" if _CN.MODEL.COORD_REFINEMENT else "") + \
+                            ("A" if _CN.DATASET.AUGMENTATION_TYPE is not None else "")
+elif _CN.MODEL.VERSION == "v2":
+    _CN.LOGGER.LOGGER_NAME = (f"{_CN.DATASET.TRAINVAL_DATA_SOURCE}_{_CN.IMAGE_SIZE}_") + \
+                            (_CN.MODEL.VERSION + "_") + \
+                            (f"{_CN.MODEL.COARSE_SCALE}_") + \
+                            (f"{_CN.MODEL.COARSE_ENCODER.NUM_LAYERS}+{_CN.MODEL.FINE_ENCODER.NUM_LAYERS}")+\
+                            (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}_") + \
+                            ("P" if _CN.MODEL.PIXEL_SHUFFLE_REFINEMENT else "") + \
+                            ("D" if _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT else "") + \
+                            ("A" if _CN.DATASET.AUGMENTATION_TYPE is not None else "")
 
 # geometric metrics and pose solver
 _CN.TRAINER.POSE_GEO_MODEL = "E"  # ["E", "F", "H"]

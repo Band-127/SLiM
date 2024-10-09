@@ -231,21 +231,24 @@ def spvs_fine(data, config):
     # 1. misc
     # w_pt0_i, pt1_i = data.pop('spv_w_pt0_i'), data.pop('spv_pt1_i')
     w_pt0_i, pt1_i = data["spv_w_pt0_i"], data["spv_pt1_i"]
-    radius = (
-        config["MODEL"]["COARSE_SCALE"] // 2
-        if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
-        else int(config["MODEL"]["COARSE_SCALE"] // config["MODEL"]["FINE_SCALE"]) // 2
-    )
 
     # 2. get coarse prediction
     b_ids, i_ids, j_ids = data["b_idx_c"], data["i_idx_c"], data["j_idx_c"]
 
     # 3. compute gt
-    scale = (
-        1
-        if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
-        else config["MODEL"]["FINE_SCALE"]
-    )
+    if config.MODEL.VERSION == "v1":
+        scale = (
+            1
+            if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
+            else config["MODEL"]["FINE_SCALE"]
+        )
+    elif config.MODEL.VERSION == "v2":
+        scale = (
+            1
+            if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
+            else config["MODEL"]["BACKBONE"]["RESOLUTION"][0]
+        )
+    radius = data["sim_matrix_f"].shape[-1] / 2
     scale = scale * data["scale1"][b_ids] if "scale1" in data else scale
     # `coord_offset_f_gt` might exceed the window, i.e. abs(*) > 1, which would be filtered later
     expec_f_gt = (
@@ -256,11 +259,7 @@ def spvs_fine(data, config):
 
     # 4. compute sim_matrix_f_gt
     M = expec_f_gt.shape[0]
-    W = (
-        config["MODEL"]["COARSE_SCALE"]
-        if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
-        else int(config["MODEL"]["COARSE_SCALE"] // config["MODEL"]["FINE_SCALE"])
-    )
+    W = int(data["sim_matrix_f"].shape[-1])
     sim_matrix_f_gt = torch.zeros(M, W, W, device=device)
     expec_f_gt_idx = ((expec_f_gt + 1) / 2 * (W - 1)).round().long()
     sim_matrix_f_gt[
