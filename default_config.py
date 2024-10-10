@@ -78,10 +78,10 @@ _CN.TRAINER = CN()
 _CN.TRAINER.WORLD_SIZE = None                       # Will be calculated using number of nodes and exact number of devices available
 _CN.TRAINER.GRADIENT_CLIPPING = 0.5                 # Gradient clipping
 _CN.TRAINER.CANONICAL_BS = 8
-_CN.TRAINER.CANONICAL_LR = 5e-4                     # using LR finder provided by pytorch lightning
+_CN.TRAINER.CANONICAL_LR = 3e-4                     # using LR finder provided by pytorch lightning
 _CN.TRAINER.SCALING = None                          # this will be calculated automatically
 _CN.TRAINER.FIND_LR = False                         # use learning rate finder from pytorch-lightning, TODO: fix lr finder
-_CN.TRAINER.FIRST_STAGE_EPOCHS = 2                  # first stage epochs
+_CN.TRAINER.FIRST_STAGE_EPOCHS = 1                  # first stage epochs
 # optimizer
 _CN.TRAINER.OPTIMIZER = "AdamW"                     # options: [Adam, AdamW]
 _CN.TRAINER.TRUE_LR = None
@@ -91,7 +91,7 @@ _CN.TRAINER.ADAMW_DECAY = 0.1
 _CN.TRAINER.SCHEDULER = "MultiStepLR"               # options: [MultiStepLR, CosineAnnealing, ExponentialLR]
 _CN.TRAINER.SCHEDULER_INTERVAL = "epoch"            # [epoch, step]
 _CN.TRAINER.MSLR_MILESTONES = [4, 8, 12, 16, 20]    # MSLR: MultiStepLR
-_CN.TRAINER.MSLR_GAMMA = 0.5
+_CN.TRAINER.MSLR_GAMMA = 0.2
 _CN.TRAINER.COSA_TMAX = 30                          # COSA: CosineAnnealing
 _CN.TRAINER.ELR_GAMMA = 0.999992                    # ELR: ExponentialLR, this value for "step" interval
 # step-based warm-up
@@ -104,7 +104,7 @@ _CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 64                # number of val/test paris f
 _CN.TRAINER.PLOT_MODE = 'evaluation'                # ['evaluation', 'confidence']
 _CN.TRAINER.PLOT_MATCHES_ALPHA = 'dynamic'
 # For metric calculation
-_CN.TRAINER.RANSAC_PIXEL_THR = 0.5
+_CN.TRAINER.RANSAC_PIXEL_THR = 0.2
 _CN.TRAINER.RANSAC_CONF = 0.99999
 _CN.TRAINER.EPI_ERR_THR = 5e-4 if _CN.DATASET.TRAINVAL_DATA_SOURCE == "ScanNet" else 1e-4   # recommendation: 5e-4 for ScanNet, 1e-4 for MegaDepth (from SuperGlue)
 
@@ -119,6 +119,7 @@ _CN.PROFILER.PROFILER__NAME = None                  # options: [None, "inference
 ########    Model Configurations    ########
 _CN.MODEL = CN()
 _CN.MODEL.DEBUG = _CN.DEBUG
+_CN.MODEL.SHOW_GT_MATCHED_FINE = False
 _CN.MODEL.DTYPE = _CN.DTYPE
 _CN.MODEL.VERSION = "v2"                            # options: ["v1", "v2"]
 _CN.MODEL.FUSION_TYPE = None                        # options: ["mamba", "transformer", None], None for no feature fusion
@@ -133,19 +134,23 @@ _CN.MODEL.USING_MAMBA2 = True
 _CN.MODEL.DISABLE_PE = False                        # Whether using pe before encoder or not
 _CN.MODEL.PIXEL_SHUFFLE_REFINEMENT = True           # Whether using pixel shuffle refinement for fine coordinates generation
 _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT = True         # Whether using depth map to refine conf mask(generate confidence mask from output feature using mlp to mask unwanted area in correlation)
-_CN.MODEL.FINE_REFINEMENT = True                    # Whether using feature refinement network for fine feature
+_CN.MODEL.FINE_REFINEMENT = False                   # Whether using feature refinement network for fine feature
 _CN.MODEL.COORD_REFINEMENT = False                  # Whether using coordinate refinement for fine coordinates generation
 
 # Feature Backbone
 _CN.MODEL.BACKBONE = CN()
-_CN.MODEL.BACKBONE.BACKBONE_TYPE = "VMamba_T"
+_CN.MODEL.BACKBONE.BACKBONE_TYPE = "RepVGG_cropped"
 # backbone options: 
 # [
-#   "ResNet18", "ResNet18_modified", "ResNet18_pretrained", 
-#   "VMamba_T", "VMamba_S", "VMamba_B", 
-#   "ResNet18_pretrained_FPN" , "VMamba_T_FPN", "VMamba_S_FPN", "VMamba_B_FPN", 
-#   "VMamba_T_cropped", "VMamba_S_cropped", "VMamba_B_cropped",
+#   "ResNet18", "ResNet18_modified", "ResNet18_pretrained",                         <-- ResNet in LoFTR, changed batchnorm into layernorm, original ResNet and pretrained weights
+#   "VMamba_T", "VMamba_S", "VMamba_B",                                             <-- means pretrained, patch size = 4, 1/2 is extracted after patch embedding with a pixel shuffle(x2)
+#   "VMamba_T_modifed", "VMamba_S_modifed", "VMamba_B_modifed",                     <-- means non pretrained, patch size = 2
+#   "ResNet18_pretrained_FPN" , "VMamba_T_FPN", "VMamba_S_FPN", "VMamba_B_FPN",     <-- pretrained and with FPN
+#   "VMamba_T_cropped", "VMamba_S_cropped", "VMamba_B_cropped",                     <-- pretrained without last two layers, 1/2 is extracted after patch embedding with a pixel shuffle(x2)
+#   "RepVGG", "RepVGG_FPN", "RepVGG_cropped"                                        <-- first two normal RepVGG, the last one is same as Efficient LoFTR, which patch size = 2
+#   "RepVGG_pretrained", "RepVGG_pretrained_FPN", "RepVGG_pretrained_cropped"       <-- pretrained, add a fpn, without last two layers
 # ]
+# Efficient LoFTR using RepVGG_cropped
 _CN.MODEL.BACKBONE.RESOLUTION = (4, 8, 16, 32)                          # options: [(2, 4, 8), (2, 4, 8, 16)] for ResNet18 and ResNet18_modified, will automatically set for ResNet18_pretrained and VMamba
 _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256, 512)                     # options: (128, 196, 256)(Modified by LoFTR), will automatically set for ResNet18_pretrained and VMamba
 _CN.MODEL.BACKBONE.INPUT_SIZE = _CN.IMAGE_SIZE
@@ -213,8 +218,8 @@ _CN.LOSS.COARSE_WEIGHT = 1.0
 _CN.LOSS.FOCAL_ALPHA = 0.25
 _CN.LOSS.FOCAL_GAMMA = 2.0
 # FINE MATCHING
-_CN.LOSS.FINE_WEIGHT = 1.0
-_CN.LOSS.FINE_TYPE = 'l2'                           # options: ['l2', 'l2_std']
+_CN.LOSS.FINE_WEIGHT = 2.0
+_CN.LOSS.FINE_TYPE = 'l2'                       # options: ['l2', 'l2_std']
 _CN.LOSS.FINE_THR = 1.0
 # CONFIDENCE MASK REFINEMENT
 _CN.LOSS.CONF_MASK_DEPTH_REFINEMENT = _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT
@@ -225,33 +230,72 @@ _CN.PROFILER.PROFILER_NAME = None                   # options: [None, "inference
 
 # Set model backbone settings for VMamba and pretrained ResNet18
 if "VMamba_T" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (24, 96, 192, 384, 768)
-    _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
-    _CN.MODEL.COARSE_SCALE_IDX = 2
-    _CN.MODEL.FINE_SCALE_IDX = 1
+    if "modified" not in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
+        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
+        _CN.MODEL.BACKBONE.LAYER_DIMS = (24, 96, 192, 384, 768)
+        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
+        _CN.MODEL.COARSE_SCALE_IDX = 2
+        _CN.MODEL.FINE_SCALE_IDX = 1
+    else:
+        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16)
+        _CN.MODEL.BACKBONE.LAYER_DIMS = (96, 192, 384, 768)
+        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1)
+        _CN.MODEL.COARSE_SCALE_IDX = 2
+        _CN.MODEL.FINE_SCALE_IDX = 1
 elif "VMamba_S" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (24, 96, 192, 384, 768)
-    _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
-    _CN.MODEL.COARSE_SCALE_IDX = 2
-    _CN.MODEL.FINE_SCALE_IDX = 1
+    if "modified" not in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
+        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
+        _CN.MODEL.BACKBONE.LAYER_DIMS = (24, 96, 192, 384, 768)
+        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
+        _CN.MODEL.COARSE_SCALE_IDX = 2
+        _CN.MODEL.FINE_SCALE_IDX = 1
+    else:
+        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16)
+        _CN.MODEL.BACKBONE.LAYER_DIMS = (96, 192, 384, 768)
+        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1)
+        _CN.MODEL.COARSE_SCALE_IDX = 2
+        _CN.MODEL.FINE_SCALE_IDX = 1
 elif "VMamba_B" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (32, 128, 256, 512, 1024)
-    _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
-    _CN.MODEL.COARSE_SCALE_IDX = 2
-    _CN.MODEL.FINE_SCALE_IDX = 1
+    if "modified" not in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
+        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
+        _CN.MODEL.BACKBONE.LAYER_DIMS = (32, 128, 256, 512, 1024)
+        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
+        _CN.MODEL.COARSE_SCALE_IDX = 2
+        _CN.MODEL.FINE_SCALE_IDX = 1
+    else:
+        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16)
+        _CN.MODEL.BACKBONE.LAYER_DIMS = (128, 256, 512, 1024)
+        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1)
+        _CN.MODEL.COARSE_SCALE_IDX = 2
+        _CN.MODEL.FINE_SCALE_IDX = 1
 elif "ResNet18_pretrained" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
     _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
     _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 64, 128, 256, 512)
     _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
     _CN.MODEL.COARSE_SCALE_IDX = 2
     _CN.MODEL.FINE_SCALE_IDX = 1
+elif "RepVGG" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
+    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
+    _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 64, 128, 256, 1280)
+    _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
+    _CN.MODEL.COARSE_SCALE_IDX = 2
+    _CN.MODEL.FINE_SCALE_IDX = 1
 if "cropped" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-    _CN.MODEL.BACKBONE.RESOLUTION = _CN.MODEL.BACKBONE.RESOLUTION[0: len(_CN.MODEL.BACKBONE.RESOLUTION) - 1]
-    _CN.MODEL.BACKBONE.LAYER_DIMS = _CN.MODEL.BACKBONE.LAYER_DIMS[0: len(_CN.MODEL.BACKBONE.LAYER_DIMS) - 1]
-    _CN.MODEL.SCALES_SELECTION = _CN.MODEL.SCALES_SELECTION[0: len(_CN.MODEL.SCALES_SELECTION) - 1]
+    _CN.MODEL.BACKBONE.RESOLUTION = _CN.MODEL.BACKBONE.RESOLUTION[0: len(_CN.MODEL.BACKBONE.RESOLUTION) - 2]
+    _CN.MODEL.BACKBONE.LAYER_DIMS = _CN.MODEL.BACKBONE.LAYER_DIMS[0: len(_CN.MODEL.BACKBONE.LAYER_DIMS) - 2]
+    _CN.MODEL.SCALES_SELECTION = _CN.MODEL.SCALES_SELECTION[0: len(_CN.MODEL.SCALES_SELECTION) - 2]
+if _CN.MODEL.BACKBONE.BACKBONE_TYPE == "RepVGG_cropped":
+    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
+    _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256)
+    _CN.MODEL.SCALES_SELECTION = (0, 1, 1)
+    _CN.MODEL.COARSE_SCALE_IDX = 2
+    _CN.MODEL.FINE_SCALE_IDX = 1
+elif _CN.MODEL.BACKBONE.BACKBONE_TYPE == "RepVGG_pretrained_cropped":
+    _CN.MODEL.BACKBONE.RESOLUTION = (4, 8, 16)
+    _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256)
+    _CN.MODEL.SCALES_SELECTION = (1, 1, 1)
+    _CN.MODEL.COARSE_SCALE_IDX = 1
+    _CN.MODEL.FINE_SCALE_IDX = 1
 
 # Calculate coarse scale
 _CN.DATASET.MGDPT_COARSE_SCALE = _CN.MODEL.COARSE_SCALE = _CN.MODEL.BACKBONE.RESOLUTION[_CN.MODEL.COARSE_SCALE_IDX]

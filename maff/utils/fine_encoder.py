@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 from typing import Tuple
 from einops.einops import rearrange
+from typing import List
 from maff.mamba.MambaEncoder import MambaLayer
 
 
@@ -61,11 +63,12 @@ class FineEncoder(nn.Module):
         self,
         feat0_quadtrees: torch.Tensor,
         feat1_quadtrees: torch.Tensor,
-        finest_windows_size,
+        all_window_size: List[int],
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Input: [M x L x C], [M x L x C]
+        # 1. Input: [M x L x C], [M x L x C]
         x = torch.concat([feat0_quadtrees, feat1_quadtrees], dim=-2)  # [M x 2L x C]
 
+        # 2. Mamba
         for i in range(self.num_layers):
             # 1. Bidirectional scan
             xb = x.flip(dims=(-2,))
@@ -78,26 +81,106 @@ class FineEncoder(nn.Module):
             delta_x = self.layer_norms[i](delta_x)
             # 5. Residual
             x = delta_x + x
-
         new_feat0_quadtrees = x[:, : feat0_quadtrees.shape[-2], :]  # [M x L x C]
         new_feat1_quadtrees = x[:, feat0_quadtrees.shape[-2] :, :]  # [M x L x C]
 
-        ww = finest_windows_size**2
-        start = new_feat0_quadtrees.shape[-2] - ww
-        finest_feat0 = new_feat0_quadtrees[:, start:, :]  # [M x WW x C]
-        finest_feat1 = new_feat1_quadtrees[:, start:, :]  # [M x WW x C]
+        # 3. Fuse all scales like fpn
+        all_window_size_squared = [w**2 for w in all_window_size]
+        # [M x SHW x C] -> S x [M x HW x C]
+        new_feat0_quadtrees = list(
+            torch.split(new_feat0_quadtrees, all_window_size_squared, dim=-2)
+        )
+        new_feat1_quadtrees = list(
+            torch.split(new_feat1_quadtrees, all_window_size_squared, dim=-2)
+        )
+        # start from the coarse scale
+        feat0 = rearrange(
+            new_feat0_quadtrees[0],
+            "m (h w) c -> m c h w",
+            h=all_window_size[0],
+            w=all_window_size[0],
+        )  # [M x C x H x W]
+        feat1 = rearrange(
+            new_feat1_quadtrees[0],
+            "m (h w) c -> m c h w",
+            h=all_window_size[0],
+            w=all_window_size[0],
+        )  # [M x C x H x W]
+        for idx in range(1, len(new_feat0_quadtrees)):
+            feat0 = F.interpolate(feat0, scale_factor=2) + rearrange(
+                new_feat0_quadtrees[idx],
+                "m (h w) c -> m c h w",
+                h=all_window_size[idx],
+                w=all_window_size[idx],
+            )
+            feat1 = F.interpolate(feat1, scale_factor=2) + rearrange(
+                new_feat1_quadtrees[idx],
+                "m (h w) c -> m c h w",
+                h=all_window_size[idx],
+                w=all_window_size[idx],
+            )
 
-        finest_feat0 = rearrange(
-            finest_feat0,
-            "m (h w) c -> m c h w",
-            h=finest_windows_size,
-            w=finest_windows_size,
-        )  # [M x C x H x W]
-        finest_feat1 = rearrange(
-            finest_feat1,
-            "m (h w) c -> m c h w",
-            h=finest_windows_size,
-            w=finest_windows_size,
-        )  # [M x C x H x W]
+        # # For all fine scales, interpolate and add together for forcelly fusion
+        # all_window_size_squared = [w**2 for w in all_window_size]
+        # # [M x SHW x C] -> S x [M x HW x C]
+        # new_feat0_quadtrees = list(
+        #     torch.split(new_feat0_quadtrees, all_window_size_squared, dim=-2)
+        # )
+        # new_feat1_quadtrees = list(
+        #     torch.split(new_feat1_quadtrees, all_window_size_squared, dim=-2)
+        # )
+        # # the finest
+        # finest_feat0 = new_feat0_quadtrees.pop(-1)
+        # finest_feat1 = new_feat1_quadtrees.pop(-1)
+        # finest_feat0 = rearrange(
+        #     finest_feat0,
+        #     "m (h w) c -> m c h w",
+        #     h=all_window_size[-1],
+        #     w=all_window_size[-1],
+        # )  # [M x C x H x W]
+        # finest_feat1 = rearrange(
+        #     finest_feat1,
+        #     "m (h w) c -> m c h w",
+        #     h=all_window_size[-1],
+        #     w=all_window_size[-1],
+        # )  # [M x C x H x W]
+        # # the others
+        # scale = 2 ** len(new_feat0_quadtrees)
+        # for idx in range(len(new_feat0_quadtrees)):
+        #     feat0 = new_feat0_quadtrees[idx]
+        #     feat1 = new_feat1_quadtrees[idx]
+        #     feat0 = rearrange(
+        #         feat0,
+        #         "m (h w) c -> m c h w",
+        #         h=all_window_size[idx],
+        #         w=all_window_size[idx],
+        #     )  # [M x C x H x W]
+        #     feat1 = rearrange(
+        #         feat1,
+        #         "m (h w) c -> m c h w",
+        #         h=all_window_size[idx],
+        #         w=all_window_size[idx],
+        #     )  # [M x C x H x W]
+        #     finest_feat0 = finest_feat0 + F.interpolate(feat0, scale_factor=scale)
+        #     finest_feat1 = finest_feat1 + F.interpolate(feat1, scale_factor=scale)
+        #     scale /= 2
+
+        # finest_windows_size = all_window_size[-1]
+        # ww = finest_windows_size**2
+        # start = new_feat0_quadtrees.shape[-2] - ww
+        # finest_feat0 = new_feat0_quadtrees[:, start:, :]  # [M x WW x C]
+        # finest_feat1 = new_feat1_quadtrees[:, start:, :]  # [M x WW x C]
+        # finest_feat0 = rearrange(
+        #     finest_feat0,
+        #     "m (h w) c -> m c h w",
+        #     h=finest_windows_size,
+        #     w=finest_windows_size,
+        # )  # [M x C x H x W]
+        # finest_feat1 = rearrange(
+        #     finest_feat1,
+        #     "m (h w) c -> m c h w",
+        #     h=finest_windows_size,
+        #     w=finest_windows_size,
+        # )  # [M x C x H x W]
         # Output: single scale fine feature, M x C x H x W, at the end of quadtrees using finest_windows_size
-        return finest_feat0, finest_feat1
+        return feat0, feat1

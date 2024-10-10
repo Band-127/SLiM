@@ -7,13 +7,10 @@ import kornia.geometry.subpix.dsnt as dsnt
 from kornia.utils.grid import create_meshgrid
 
 from maff.backbone import build_backbone
-from maff.mamba.MambaEncoder import MultiScaleMambaEncoder
-from maff.transformer.transformer import LocalFeatureTransformer
 from maff.utils.position_encoding import DualMultiScaleSinePositionalEncoding
 from maff.utils.channel_alignment import ChannelAlignment
 from maff.utils.conf_mask_head import ConfMaskHead
 from maff.utils.pixel_shuffle_head import PixelShuffleHead
-from maff.utils.fine_refinement import FineRefinement
 from maff.utils.any_input_identity import AnyInputIdentity
 from maff.utils.coarse_encoder import CoarseEncoder
 from maff.utils.fine_encoder import FineEncoder
@@ -157,7 +154,7 @@ class MAFF_v2(nn.Module):
 
                 "feat0_f": (torch.Tensor): (M, C, Hw, Ww): fine feature 0
                 "feat1_f": (torch.Tensor): (M, C, Hw, Ww): fine feature 1
-                "fine_window_size" (int): Hw or Ww which is the window size of fine features
+                "all_window_size" (List[int]): Hw or Ww which are window sizes of all fine features, from coarse to fine, e.g. 1, 2, 4, ...
 
                 "fine_coord_0": (torch.Tensor): (M, 2) fine matched coords in image 0, in absolute coordinate
                 "fine_coord_1": (torch.Tensor): (M, 2) fine matched coords in image 1, in absolute coordinate
@@ -244,17 +241,17 @@ class MAFF_v2(nn.Module):
         self._get_coarse_coord_test(data=data)  # Get coord from sim matrix
 
         # 7. Fine matching
-        feat0_quadtrees, feat1_quadtrees, finest_window_size = (
+        feat0_quadtrees, feat1_quadtrees, all_window_size = (
             self._extraxt_fine_features(data=data)
         )  # [M x (f_coarse + 4*f_fine_0 + 16*f_fine_1 + ...) x C], from coarse to fine scale
         fine_x0, fine_x1 = self.fine_encoder(
-            feat0_quadtrees, feat1_quadtrees, finest_window_size
+            feat0_quadtrees, feat1_quadtrees, all_window_size
         )
         data.update(
             {
                 "feat0_f": fine_x0,  # M, C, H, W
                 "feat1_f": fine_x1,  # M, C, H, W
-                "fine_window_size": finest_window_size,  # int
+                "all_window_size": all_window_size,  # List[int]
             }
         )
         self._fine_matching(data=data)
@@ -319,17 +316,17 @@ class MAFF_v2(nn.Module):
         self._get_coarse_coord_train(data=data)  # Get all coord from gt
 
         # 7. Fine matching
-        feat0_quadtrees, feat1_quadtrees, finest_window_size = (
+        feat0_quadtrees, feat1_quadtrees, all_window_size = (
             self._extraxt_fine_features(data=data)
         )  # [M x (f_coarse + 4*f_fine_0 + 16*f_fine_1 + ...) x C], from coarse to fine scale
         fine_x0, fine_x1 = self.fine_encoder(
-            feat0_quadtrees, feat1_quadtrees, finest_window_size
+            feat0_quadtrees, feat1_quadtrees, all_window_size
         )
         data.update(
             {
                 "feat0_f": fine_x0,  # M, C, H, W
                 "feat1_f": fine_x1,  # M, C, H, W
-                "fine_window_size": finest_window_size,  # int
+                "all_window_size": all_window_size,  # List[int]
             }
         )
         self._fine_matching(data=data)
@@ -536,7 +533,9 @@ class MAFF_v2(nn.Module):
         )
         # Other scales
         window_size = 2
+        all_window_size = [1]
         for feat_idx in range(1, feat_len):
+            all_window_size.append(window_size)
             fine_topleft_idx_0 = coarse_topleft_idx_0 * window_size
             fine_topleft_idx_1 = coarse_topleft_idx_1 * window_size
             feat0_quadtrees.append(
@@ -550,12 +549,11 @@ class MAFF_v2(nn.Module):
                 )
             )  # M x (W W) x C
             window_size *= 2
-        finest_window_size = int(window_size // 2)
         # Output: Scales x [M x L x C], from coarse to fine scale
         feat0_quadtrees = torch.concat(feat0_quadtrees, dim=1)
         feat1_quadtrees = torch.concat(feat1_quadtrees, dim=1)
         # Output: [M x (f_coarse + 4*f_fine_0 + 16*f_fine_1 + ...) x C], from coarse to fine scale
-        return feat0_quadtrees, feat1_quadtrees, finest_window_size
+        return feat0_quadtrees, feat1_quadtrees, all_window_size
 
     @staticmethod
     def _extract_feat_window(
@@ -651,3 +649,13 @@ class MAFF_v2(nn.Module):
         x = torch.softmax(x, dim=1)
         x = x.view(x.shape[0], h, w)
         return x
+
+    def load_state_dict(self, state_dict, *args, **kwargs):
+        for k in list(state_dict.keys()):
+            if k.startswith("maff."):
+                state_dict[k.replace("maff.", "", 1)] = state_dict.pop(k)
+        return super().load_state_dict(state_dict, *args, **kwargs)
+
+    def reparameter(self):
+        if hasattr(self.feature_backbone, "switch_to_deploy"):
+            self.feature_backbone.switch_to_deploy()

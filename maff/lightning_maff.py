@@ -70,6 +70,8 @@ class PL_MAFF(pl.LightningModule):
         self.dump_dir = dump_dir
         self.num_devices = None
         self.first_stage_epochs = config.TRAINER.FIRST_STAGE_EPOCHS
+        self.reparameter = False
+        self.show_gt_matched_fine_on_val = config.MODEL.SHOW_GT_MATCHED_FINE
 
         if config["MODEL"]["VERSION"] == "v1":
             _MAFF = MAFF
@@ -91,7 +93,9 @@ class PL_MAFF(pl.LightningModule):
         self.training_outputs = []
         self.validation_outputs = []
         self.test_outputs = []
-        self.forward_times = []
+        self.train_forward_times = []
+        self.val_forward_times = []
+        self.test_forward_times = []
 
         self.n_vals_plot = max(
             config.TRAINER.N_VAL_PAIRS_TO_PLOT // config.TRAINER.WORLD_SIZE, 1
@@ -208,7 +212,10 @@ class PL_MAFF(pl.LightningModule):
         local_time = torch.tensor(end_time - start_time, device=self.device)
         mean_time = get_mean_time_across_ranks(local_time)
         batch.update({"forward_time": mean_time.item()})
-        self.forward_times.append(mean_time.item())
+        if training:
+            self.train_forward_times.append(mean_time.item())
+        else:
+            self.val_forward_times.append(mean_time.item())
         torch.cuda.empty_cache()
 
     def _compute_metrics(self, batch):
@@ -276,15 +283,15 @@ class PL_MAFF(pl.LightningModule):
         torch.cuda.empty_cache()
 
         # time
-        if self.trainer.global_rank == 0 and len(self.forward_times) > 0:
-            avg_forward_time = sum(self.forward_times) / len(self.forward_times)
+        if self.trainer.global_rank == 0 and len(self.train_forward_times) > 0:
+            avg_forward_time = sum(self.train_forward_times) / len(self.train_forward_times)
             self.logger.experiment.add_scalar(
                 "train/avg_forward_time", avg_forward_time, self.trainer.current_epoch
             )
-        self.forward_times.clear()
+        self.train_forward_times.clear()
 
     def validation_step(self, batch, batch_idx):
-        self._trainval_inference(batch, training=False)
+        self._trainval_inference(batch, training=self.show_gt_matched_fine_on_val)
 
         ret_dict, _ = self._compute_metrics(batch)
 
@@ -362,9 +369,21 @@ class PL_MAFF(pl.LightningModule):
                                 cur_epoch,
                                 close=True,
                             )
+                # time
+                if len(self.val_forward_times) > 0:
+                    avg_forward_time = self.calculate_trimmed_mean(self.val_forward_times)
+                    self.logger.experiment.add_scalar(
+                        "test/avg_forward_time", avg_forward_time, self.trainer.current_epoch
+                    )
+                    self.val_forward_times.clear()
 
         self.validation_outputs.clear()
         torch.cuda.empty_cache()
+
+    def on_test_epoch_start(self):
+        if not self.reparameter:
+            self.maff.reparameter()
+            self.reparameter = True
 
     def test_step(self, batch, batch_idx):
         # inference
@@ -377,7 +396,7 @@ class PL_MAFF(pl.LightningModule):
         local_time = torch.tensor(end_time - start_time, device=self.device)
         mean_time = get_mean_time_across_ranks(local_time)
         batch.update({"forward_time": mean_time.item()})
-        self.forward_times.append(mean_time.item())
+        self.test_forward_times.append(mean_time.item())
         torch.cuda.empty_cache()
 
         # metrics
@@ -426,8 +445,8 @@ class PL_MAFF(pl.LightningModule):
 
         if self.trainer.global_rank == 0:
             # time
-            if len(self.forward_times) > 0:
-                avg_forward_time = self.calculate_trimmed_mean(self.forward_times)
+            if len(self.test_forward_times) > 0:
+                avg_forward_time = self.calculate_trimmed_mean(self.test_forward_times)
                 print(f"Avg forward time: {avg_forward_time*1000: 8.4}ms")
             print(self.profiler.summary())
             val_metrics_4tb = aggregate_metrics(

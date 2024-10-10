@@ -33,11 +33,11 @@ class LayerNorm2d(nn.Module):
 class VMamba_Feature_Extractor(nn.Module):
     def __init__(self, config):
         super(VMamba_Feature_Extractor, self).__init__()
-        if config["BACKBONE_TYPE"] == "VMamba_T":
+        if "VMamba_T" in config["BACKBONE_TYPE"]:
             self.backbone = build_pretrained_VMamba_T(config)
-        elif config["BACKBONE_TYPE"] == "VMamba_S":
+        elif "VMamba_S" in config["BACKBONE_TYPE"]:
             self.backbone = build_pretrained_VMamba_S(config)
-        elif config["BACKBONE_TYPE"] == "VMamba_B":
+        elif "VMamba_B" in config["BACKBONE_TYPE"]:
             self.backbone = build_pretrained_VMamba_B(config)
         else:  # Default to Tiny
             self.backbone = build_pretrained_VMamba_T(config)
@@ -79,14 +79,53 @@ class VMamba_Feature_Extractor(nn.Module):
         return self.backbone.flops(shape, verbose)
 
 
+class VMamba_Feature_Extractor_modified(nn.Module):
+    def __init__(self, config):
+        super(VMamba_Feature_Extractor_modified, self).__init__()
+        if "VMamba_T" in config["BACKBONE_TYPE"]:
+            self.backbone = build_modified_VMamba_T(config)
+        elif "VMamba_S" in config["BACKBONE_TYPE"]:
+            self.backbone = build_modified_VMamba_S(config)
+        elif "VMamba_B" in config["BACKBONE_TYPE"]:
+            self.backbone = build_modified_VMamba_B(config)
+        else:  # Default to Tiny
+            self.backbone = build_modified_VMamba_T(config)
+
+        # remove classifier
+        del self.backbone.classifier
+
+    def forward(self, x):
+        features = []
+        # patch embed
+        x = self.backbone.patch_embed(x)
+        # pos embed
+        if self.backbone.pos_embed is not None:
+            pos_embed = (
+                self.backbone.pos_embed.permute(0, 2, 3, 1)
+                if not self.backbone.channel_first
+                else self.backbone.pos_embed
+            )
+            x = x + pos_embed
+        # forward
+        for layer in self.backbone.layers:
+            x = layer.blocks(x)
+            features.append(x)
+            x = layer.downsample(x)
+
+        return features
+
+    def flops(self, shape=(3, 224, 224), verbose=True):
+        return self.backbone.flops(shape, verbose)
+
+
 class VMamba_Feature_Extractor_with_FPN(nn.Module):
     def __init__(self, config):
         super(VMamba_Feature_Extractor_with_FPN, self).__init__()
-        if config["BACKBONE_TYPE"] == "VMamba_T_FPN":
+        if "VMamba_T" in config["BACKBONE_TYPE"]:
             self.backbone = build_pretrained_VMamba_T(config)
-        elif config["BACKBONE_TYPE"] == "VMamba_S_FPN":
+        elif "VMamba_S" in config["BACKBONE_TYPE"]:
             self.backbone = build_pretrained_VMamba_S(config)
-        elif config["BACKBONE_TYPE"] == "VMamba_B_FPN":
+        elif "VMamba_B" in config["BACKBONE_TYPE"]:
             self.backbone = build_pretrained_VMamba_B(config)
         else:  # Default to Tiny
             self.backbone = build_pretrained_VMamba_T(config)
@@ -164,11 +203,11 @@ class VMamba_Feature_Extractor_with_FPN(nn.Module):
 class VMamba_Feature_Extractor_cropped(nn.Module):
     def __init__(self, config):
         super(VMamba_Feature_Extractor_cropped, self).__init__()
-        if config["BACKBONE_TYPE"] == "VMamba_T":
+        if "VMamba_T" in config["BACKBONE_TYPE"]:
             self.backbone = build_pretrained_VMamba_T(config)
-        elif config["BACKBONE_TYPE"] == "VMamba_S":
+        elif "VMamba_S" in config["BACKBONE_TYPE"]:
             self.backbone = build_pretrained_VMamba_S(config)
-        elif config["BACKBONE_TYPE"] == "VMamba_B":
+        elif "VMamba_B" in config["BACKBONE_TYPE"]:
             self.backbone = build_pretrained_VMamba_B(config)
         else:  # Default to Tiny
             self.backbone = build_pretrained_VMamba_T(config)
@@ -247,6 +286,38 @@ def build_pretrained_VMamba_T(config):
     return model
 
 
+def build_modified_VMamba_T(config):
+    model = VSSM(
+        depths=[2, 2, 8, 2],
+        dims=96,
+        drop_path_rate=0.2,
+        patch_size=2,
+        in_chans=1,
+        num_classes=1000,
+        ssm_d_state=1,
+        ssm_ratio=1.0,
+        ssm_dt_rank="auto",
+        ssm_act_layer="silu",
+        ssm_conv=3,
+        ssm_conv_bias=False,
+        ssm_drop_rate=0.0,
+        ssm_init="v0",
+        forward_type="v05_noz",
+        mlp_ratio=4.0,
+        mlp_act_layer="gelu",
+        mlp_drop_rate=0.0,
+        gmlp=False,
+        patch_norm=True,
+        norm_layer="ln2d",
+        downsample_version="v3",
+        patchembed_version="v2",
+        use_checkpoint=False,
+        posembed=False,
+        imgsize=config["INPUT_SIZE"],
+    )
+    return model
+
+
 def build_pretrained_VMamba_S(config):
     model = VSSM(
         depths=[2, 2, 20, 2],
@@ -283,6 +354,38 @@ def build_pretrained_VMamba_S(config):
     return model
 
 
+def build_modified_VMamba_S(config):
+    model = VSSM(
+        depths=[2, 2, 20, 2],
+        dims=96,
+        drop_path_rate=0.3,
+        patch_size=2,
+        in_chans=1,
+        num_classes=1000,
+        ssm_d_state=1,
+        ssm_ratio=1.0,
+        ssm_dt_rank="auto",
+        ssm_act_layer="silu",
+        ssm_conv=3,
+        ssm_conv_bias=False,
+        ssm_drop_rate=0.0,
+        ssm_init="v0",
+        forward_type="v05_noz",
+        mlp_ratio=4.0,
+        mlp_act_layer="gelu",
+        mlp_drop_rate=0.0,
+        gmlp=False,
+        patch_norm=True,
+        norm_layer="ln2d",
+        downsample_version="v3",
+        patchembed_version="v2",
+        use_checkpoint=False,
+        posembed=False,
+        imgsize=config["INPUT_SIZE"],
+    )
+    return model
+
+
 def build_pretrained_VMamba_B(config):
     model = VSSM(
         depths=[2, 2, 20, 2],
@@ -316,4 +419,36 @@ def build_pretrained_VMamba_B(config):
         "maff/backbone/vssm/pretrained_ckpt/vssm1_base_0229s_ckpt_epoch_225.pth"
     )["model"]
     model.load_state_dict(state_dict)
+    return model
+
+
+def build_modified_VMamba_B(config):
+    model = VSSM(
+        depths=[2, 2, 20, 2],
+        dims=128,
+        drop_path_rate=0.5,
+        patch_size=2,
+        in_chans=1,
+        num_classes=1000,
+        ssm_d_state=1,
+        ssm_ratio=1.0,
+        ssm_dt_rank="auto",
+        ssm_act_layer="silu",
+        ssm_conv=3,
+        ssm_conv_bias=False,
+        ssm_drop_rate=0.0,
+        ssm_init="v0",
+        forward_type="v05_noz",
+        mlp_ratio=4.0,
+        mlp_act_layer="gelu",
+        mlp_drop_rate=0.0,
+        gmlp=False,
+        patch_norm=True,
+        norm_layer="ln2d",
+        downsample_version="v3",
+        patchembed_version="v2",
+        use_checkpoint=False,
+        posembed=False,
+        imgsize=config["INPUT_SIZE"],
+    )
     return model

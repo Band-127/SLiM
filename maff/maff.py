@@ -558,12 +558,10 @@ class MAFF(nn.Module):
             coarse_scale, coarse_scale, True, window_heatmap.device
         ).reshape(1, -1, 2)  # [1, WW, 2]
 
-        # 6. Compute absolute coordinates, coarse coor + fine coor * scale        
+        # 6. Compute absolute coordinates, coarse coor + fine coor * scale
         fine_coord_0 = data["coarse_coord_0"]
         scale1 = data["scale1"][b_idx_c] if "scale1" in data else 1
-        fine_coord_1 = (coords_normalized * r_half * scale1) + data[
-            "coarse_coord_1"
-        ]
+        fine_coord_1 = (coords_normalized * r_half * scale1) + data["coarse_coord_1"]
 
         # 7. Compute std over <x, y> (used in loss)
         var = (
@@ -628,3 +626,7 @@ class MAFF(nn.Module):
             if k.startswith("maff."):
                 state_dict[k.replace("maff.", "", 1)] = state_dict.pop(k)
         return super().load_state_dict(state_dict, *args, **kwargs)
+
+    def reparameter(self):
+        if hasattr(self.feature_backbone, "switch_to_deploy"):
+            self.feature_backbone.switch_to_deploy()
