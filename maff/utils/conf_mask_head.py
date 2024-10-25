@@ -3,7 +3,7 @@ from torch import nn
 from einops.einops import rearrange
 
 
-class ConfMaskHead(nn.Module):
+class ConfHead(nn.Module):
     def __init__(self, d_model: int):
         """
         Confidence mask head, a 3-layers MLP followed by a sigmoid activation.
@@ -11,7 +11,7 @@ class ConfMaskHead(nn.Module):
         Args:
             d_model (int): Dimension of the input feature.
         """
-        super(ConfMaskHead, self).__init__()
+        super(ConfHead, self).__init__()
         self.head = nn.Sequential(
             nn.Linear(in_features=d_model, out_features=int(d_model**0.5), bias=True),
             nn.GELU(approximate="tanh"),

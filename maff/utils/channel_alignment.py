@@ -29,6 +29,19 @@ class ChannelAlignment(nn.Module):
                 for d in self.d_model_input
             ]
         )
+        self.layer_norms = nn.ModuleList(
+            [nn.LayerNorm(self.d_model_output) for _ in self.d_model_input]
+        )
+
+        with torch.no_grad():
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(
+                        m.weight, mode="fan_out", nonlinearity="relu"
+                    )
+                elif isinstance(m, nn.LayerNorm):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, x: Sequence[torch.Tensor]) -> Sequence[torch.Tensor]:
         """
@@ -43,6 +56,7 @@ class ChannelAlignment(nn.Module):
         # For each scale
         for i, s in enumerate(x):
             # Align
-            x[i] = self.conv_layer[i](s)
+            s = self.conv_layer[i](s)
+            x[i] = self.layer_norms[i](s.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
 
         return x

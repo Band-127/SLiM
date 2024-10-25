@@ -73,9 +73,13 @@ class RepVGG_Feature_Extractor(nn.Module):
             self.conv1to3.weight.fill_(1.0)
 
     def switch_to_deploy(self):
-        for module in self.modules():
-            if hasattr(module, "switch_to_deploy"):
-                module.switch_to_deploy()
+        module = self.layer0
+        if hasattr(module, "switch_to_deploy"):
+            module.switch_to_deploy()
+        for modules in [self.layer1, self.layer2, self.layer3, self.layer4]:
+            for module in modules:
+                if hasattr(module, "switch_to_deploy"):
+                    module.switch_to_deploy()
 
     def forward(self, x):
         features = []
@@ -163,9 +167,13 @@ class RepVGG_Feature_Extractor_with_FPN(nn.Module):
         )
 
     def switch_to_deploy(self):
-        for module in self.modules():
-            if hasattr(module, "switch_to_deploy"):
-                module.switch_to_deploy()
+        module = self.layer0
+        if hasattr(module, "switch_to_deploy"):
+            module.switch_to_deploy()
+        for modules in [self.layer1, self.layer2, self.layer3, self.layer4]:
+            for module in modules:
+                if hasattr(module, "switch_to_deploy"):
+                    module.switch_to_deploy()
 
     def forward(self, x):
         features = []
@@ -225,9 +233,13 @@ class RepVGG_Feature_Extractor_cropped(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def switch_to_deploy(self):
-        for module in self.modules():
-            if hasattr(module, "switch_to_deploy"):
-                module.switch_to_deploy()
+        module = self.layer0
+        if hasattr(module, "switch_to_deploy"):
+            module.switch_to_deploy()
+        for modules in [self.layer1, self.layer2, self.layer3]:
+            for module in modules:
+                if hasattr(module, "switch_to_deploy"):
+                    module.switch_to_deploy()
 
     def forward(self, x):
         features = []
@@ -275,9 +287,13 @@ class RepVGG_Feature_Extractor_pretrained_cropped(nn.Module):
             self.conv1to3.weight.fill_(1.0)
 
     def switch_to_deploy(self):
-        for module in self.modules():
-            if hasattr(module, "switch_to_deploy"):
-                module.switch_to_deploy()
+        module = self.layer0
+        if hasattr(module, "switch_to_deploy"):
+            module.switch_to_deploy()
+        for modules in [self.layer1, self.layer2]:
+            for module in modules:
+                if hasattr(module, "switch_to_deploy"):
+                    module.switch_to_deploy()
 
     def forward(self, x):
         features = []

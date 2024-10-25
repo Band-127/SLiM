@@ -17,13 +17,13 @@ loguru_logger = get_rank_zero_only_logger(loguru_logger)
 
 def main():
     latest_ckpt_path = (
-        "logs/tb_logs/MegaDepth_640_v2_8_2+2_VMamba_T_PDA/version_0"
+        "logs/tb_logs/MegaDepth_640_(0, 1, 1, 1, 1)_8_4_M2_VMamba_T_PDF/version_0"
     )
     latest_ckpt = "checkpoints/last.ckpt"
-    devices = "1,2,3,4"
+    devices = "0,1,2,3,4,5"
     ransac_thres = 0.5
-    coarse_thres = 0.3
-    image_size = 1152
+    coarse_thres = 0.5
+    image_size = 1184
 
     sys.path.append(latest_ckpt_path)
     get_cfg_defaults = importlib.import_module("config").get_cfg_defaults

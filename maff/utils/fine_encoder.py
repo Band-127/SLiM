@@ -4,10 +4,10 @@ from torch.nn import functional as F
 from typing import Tuple
 from einops.einops import rearrange
 from typing import List
-from maff.mamba.MambaEncoder import MambaLayer
+from maff.mamba.MambaEncoder import MambaLayer, QuadConcatMambaLayer
 
 
-class FineEncoder(nn.Module):
+class QuadTreeFineEncoder(nn.Module):
     """
     Fine feature encoder(Multi-scale quadtree)
     """
@@ -21,7 +21,7 @@ class FineEncoder(nn.Module):
         delta: int,
         using_mamba2: bool,
     ) -> None:
-        super(FineEncoder, self).__init__()
+        super(QuadTreeFineEncoder, self).__init__()
 
         self.num_layers = num_layers
         self.layers_fw = nn.ModuleList(
@@ -58,6 +58,10 @@ class FineEncoder(nn.Module):
                 if isinstance(m, nn.LayerNorm):
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
+                elif isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(
+                        m.weight, mode="fan_out", nonlinearity="relu"
+                    )
 
     def forward(
         self,
@@ -119,68 +123,97 @@ class FineEncoder(nn.Module):
                 h=all_window_size[idx],
                 w=all_window_size[idx],
             )
-
-        # # For all fine scales, interpolate and add together for forcelly fusion
-        # all_window_size_squared = [w**2 for w in all_window_size]
-        # # [M x SHW x C] -> S x [M x HW x C]
-        # new_feat0_quadtrees = list(
-        #     torch.split(new_feat0_quadtrees, all_window_size_squared, dim=-2)
-        # )
-        # new_feat1_quadtrees = list(
-        #     torch.split(new_feat1_quadtrees, all_window_size_squared, dim=-2)
-        # )
-        # # the finest
-        # finest_feat0 = new_feat0_quadtrees.pop(-1)
-        # finest_feat1 = new_feat1_quadtrees.pop(-1)
-        # finest_feat0 = rearrange(
-        #     finest_feat0,
-        #     "m (h w) c -> m c h w",
-        #     h=all_window_size[-1],
-        #     w=all_window_size[-1],
-        # )  # [M x C x H x W]
-        # finest_feat1 = rearrange(
-        #     finest_feat1,
-        #     "m (h w) c -> m c h w",
-        #     h=all_window_size[-1],
-        #     w=all_window_size[-1],
-        # )  # [M x C x H x W]
-        # # the others
-        # scale = 2 ** len(new_feat0_quadtrees)
-        # for idx in range(len(new_feat0_quadtrees)):
-        #     feat0 = new_feat0_quadtrees[idx]
-        #     feat1 = new_feat1_quadtrees[idx]
-        #     feat0 = rearrange(
-        #         feat0,
-        #         "m (h w) c -> m c h w",
-        #         h=all_window_size[idx],
-        #         w=all_window_size[idx],
-        #     )  # [M x C x H x W]
-        #     feat1 = rearrange(
-        #         feat1,
-        #         "m (h w) c -> m c h w",
-        #         h=all_window_size[idx],
-        #         w=all_window_size[idx],
-        #     )  # [M x C x H x W]
-        #     finest_feat0 = finest_feat0 + F.interpolate(feat0, scale_factor=scale)
-        #     finest_feat1 = finest_feat1 + F.interpolate(feat1, scale_factor=scale)
-        #     scale /= 2
-
-        # finest_windows_size = all_window_size[-1]
-        # ww = finest_windows_size**2
-        # start = new_feat0_quadtrees.shape[-2] - ww
-        # finest_feat0 = new_feat0_quadtrees[:, start:, :]  # [M x WW x C]
-        # finest_feat1 = new_feat1_quadtrees[:, start:, :]  # [M x WW x C]
-        # finest_feat0 = rearrange(
-        #     finest_feat0,
-        #     "m (h w) c -> m c h w",
-        #     h=finest_windows_size,
-        #     w=finest_windows_size,
-        # )  # [M x C x H x W]
-        # finest_feat1 = rearrange(
-        #     finest_feat1,
-        #     "m (h w) c -> m c h w",
-        #     h=finest_windows_size,
-        #     w=finest_windows_size,
-        # )  # [M x C x H x W]
-        # Output: single scale fine feature, M x C x H x W, at the end of quadtrees using finest_windows_size
         return feat0, feat1
+
+
+class FineEncoder(nn.Module):
+    """
+    Fine feature encoder(Single scale features)
+    """
+
+    def __init__(
+        self,
+        in_output_dim: int,
+        num_layers: int,
+        inner_expansion: int,
+        conv_dim: int,
+        delta: int,
+        using_mamba2: bool,
+    ) -> None:
+        super(FineEncoder, self).__init__()
+
+        self.num_layers = num_layers
+        self.layers = nn.ModuleList(
+            [
+                QuadConcatMambaLayer(
+                    in_output_dim=in_output_dim,
+                    inner_expansion=inner_expansion,
+                    conv_dim=conv_dim,
+                    delta=delta,
+                    using_mamba2=using_mamba2,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+        self.layer_norms = nn.ModuleList(
+            [nn.LayerNorm(in_output_dim) for _ in range(num_layers)]
+        )
+
+        # Initialize weights
+        with torch.no_grad():
+            for m in self.modules():
+                if isinstance(m, nn.LayerNorm):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(
+        self,
+        x0: torch.Tensor,
+        x1: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Args:
+            x0 (torch.Tensor): [M, C, H, W]
+            x1 (torch.Tensor): [M, C, H, W]
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: [M, C, H, W] x0, x1
+        """
+        x0_shape = x0.shape[2:]  # H, W
+        x1_shape = x1.shape[2:]  # H, W
+
+        for idx, layer in enumerate(self.layers):
+            # Rearrange features into (B, H*W, C) and (B, W*H, C), two directions
+            x0_hw = rearrange(x0, "b c h w -> b (h w) c")
+            x1_hw = rearrange(x1, "b c h w -> b (h w) c")
+            x0_wh = rearrange(x0, "b c h w -> b (w h) c")
+            x1_wh = rearrange(x1, "b c h w -> b (w h) c")
+
+            # Layer norms
+            x0_hw = self.layer_norms[idx](x0_hw)
+            x1_hw = self.layer_norms[idx](x1_hw)
+            x0_wh = self.layer_norms[idx](x0_wh)
+            x1_wh = self.layer_norms[idx](x1_wh)
+
+            # Mamba forward, including another two directions, which is the flip of the original two directions
+            x0_hw, x1_hw, x0_wh, x1_wh = layer(x0_hw, x1_hw, x0_wh, x1_wh)
+
+            # Rearrange features back to (B, C, H, W)
+            x0_hw = rearrange(
+                x0_hw, "b (h w) c -> b c h w", h=x0_shape[0], w=x0_shape[1]
+            )
+            x1_hw = rearrange(
+                x1_hw, "b (h w) c -> b c h w", h=x1_shape[0], w=x1_shape[1]
+            )
+            x0_wh = rearrange(
+                x0_wh, "b (w h) c -> b c h w", h=x0_shape[0], w=x0_shape[1]
+            )
+            x1_wh = rearrange(
+                x1_wh, "b (w h) c -> b c h w", h=x1_shape[0], w=x1_shape[1]
+            )
+
+            # Fusion
+            x0 = 0.5 * (x0_hw + x0_wh)
+            x1 = 0.5 * (x1_hw + x1_wh)
+
+        return x0, x1

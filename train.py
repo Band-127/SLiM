@@ -4,7 +4,7 @@ from pathlib import Path
 import pytorch_lightning as pl
 from pytorch_lightning.tuner.tuning import Tuner
 from pytorch_lightning.loggers import TensorBoardLogger
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, DeviceStatsMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.strategies import DDPStrategy
 from loguru import logger as loguru_logger
 
@@ -21,8 +21,6 @@ loguru_logger = get_rank_zero_only_logger(loguru_logger)
 def main():
     config = get_cfg_defaults()
     pl.seed_everything(config.GLOBAL_SEED)
-
-    torch.set_float32_matmul_precision("high")
 
     # set train/test
     config.OVERALL_MODE = "train"
@@ -73,8 +71,7 @@ def main():
         filename="{epoch}-{auc@5:.3f}-{auc@10:.3f}-{auc@20:.3f}",
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
-    device_monitor = DeviceStatsMonitor()
-    callbacks = [ckpt_callback, lr_monitor, device_monitor]
+    callbacks = [ckpt_callback, lr_monitor]
 
     # Torch Lightning Trainer
     trainer = pl.Trainer(
@@ -97,11 +94,7 @@ def main():
         temp = config.TRAINER.WARMUP_TYPE
         model.num_devices = n_gpu_available
         tuner = Tuner(trainer)
-        lr_finder = tuner.lr_find(
-            model=model,
-            datamodule=data_module,
-            num_training=300
-        )
+        lr_finder = tuner.lr_find(model=model, datamodule=data_module, num_training=300)
         print(
             f"Best LR found by LR finder with linear progression :{lr_finder.suggestion()}"
         )

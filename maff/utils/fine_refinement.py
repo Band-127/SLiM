@@ -32,7 +32,11 @@ class FineRefinement(nn.Module):
 
         with torch.no_grad():
             for m in self.modules():
-                if isinstance(m, nn.LayerNorm):
+                if isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(
+                        m.weight, mode="fan_out", nonlinearity="relu"
+                    )
+                elif isinstance(m, nn.LayerNorm):
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
 

@@ -68,7 +68,7 @@ class MegaDepthDataset(Dataset):
             2000 if depth_padding else None
         )  # the upperbound of depthmaps size in megadepth.
 
-        self.augment_fn = augmentor_builder() if self.mode == "train" else None
+        self.augment_fn = augmentor_builder() if self.mode == "train" and augmentor_builder is not None else None
         # self.coarse_scale = getattr(kwargs, 'coarse_scale', 0.125)
         self.coarse_scale = coarse_scale
 

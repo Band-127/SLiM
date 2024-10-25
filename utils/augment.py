@@ -56,18 +56,40 @@ class MAFFAug(object):
     def __init__(self):
         self.augmentor = A.Compose(
             [
-                A.Blur(p=0.1),
-                A.MotionBlur(p=0.25),
                 A.ColorJitter(
-                    p=0.5,
-                    brightness=0.5,
-                    contrast=0.5,
-                    saturation=0.5,
+                    p=0.25,
+                    brightness=0.3,
+                    contrast=0.3,
+                    saturation=0.3,
                     hue=0.5,
                 ),
-                A.RandomRain(p=0.1),  # random occlusion
+                A.RandomRain(p=0.1),
                 A.RandomSunFlare(p=0.1),
+                A.RandomFog(p=0.1),
+                A.Blur(p=0.1, blur_limit=(3, 9)),
+                A.MotionBlur(p=0.1, blur_limit=(3, 25)),
                 A.ImageCompression(p=0.25, quality_lower=50, quality_upper=80),
+                A.ISONoise(p=0.25),
+            ]
+        )
+
+    def __call__(self, x):
+        return self.augmentor(image=x)["image"]
+
+
+class MAFFLiteAug(object):
+    def __init__(self):
+        self.augmentor = A.Compose(
+            [
+                A.ColorJitter(
+                    p=0.25,
+                    brightness=0.2,
+                    contrast=0.2,
+                    saturation=0.2,
+                    hue=0.5,
+                ),
+                A.Blur(p=0.25, blur_limit=(3, 9)),
+                A.ImageCompression(p=0.25, quality_lower=60, quality_upper=80),
                 A.ISONoise(p=0.25),
             ]
         )
@@ -83,20 +105,24 @@ def build_augmentor(method=None, **kwargs):
         return MobileAug()
     elif method == "maff":
         return MAFFAug()
+    elif method == "maff_lite":
+        return MAFFLiteAug()
     elif method is None:
         return None
     else:
         raise ValueError(f"Invalid augmentation method: {method}")
-    
+
+
 def get_augmentor_builder(method=None, **kwargs):
     if method == "dark":
         return DarkAug
     elif method == "mobile":
         return MobileAug
     elif method == "maff":
-        return MAFFAug
+        return MAFFAug    
+    elif method == "maff_lite":
+        return MAFFLiteAug
     elif method is None:
         return None
     else:
         raise ValueError(f"Invalid augmentation method: {method}")
-

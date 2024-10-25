@@ -19,6 +19,8 @@ class MAFF_Loss(nn.Module):
         self.coarse_weight = self.config["COARSE_WEIGHT"]
         self.fine_weight = self.config["FINE_WEIGHT"]
 
+        self.version = self.config["VERSION"]
+
     def compute_coarse_loss(self, data):
         conf = data["conf_matrix"]
         conf_gt = data["conf_matrix_gt"]
@@ -57,14 +59,38 @@ class MAFF_Loss(nn.Module):
 
         return loss
 
-    def compute_fine_loss(self, data):
+    def compute_fine_loss_v1(self, data):
         # 1. Compute loss for offset prediction in fine matching
-        coord_offset = data["coord_offset_f"]
-        coord_offset_gt = data["coord_offset_f_gt"]
-        std = data["std"]
+        coord_offset0 = data["coord_offset_f0"]
+        coord_offset0_gt = data["coord_offset_f0_gt"]
+        coord_offset1 = data["coord_offset_f1"]
+        coord_offset1_gt = data["coord_offset_f1_gt"]
         # correct_mask tells you which pair to compute fine-loss
         correct_mask = (
-            torch.linalg.norm(coord_offset_gt, ord=float("inf"), dim=1)
+            torch.linalg.norm(coord_offset1_gt - 1, ord=float("inf"), dim=1)
+            < self.correct_thr
+        )
+
+        # corner case: no correct fine match found
+        if not correct_mask.any():
+            return None
+        else:
+            offset_loss = self._compute_fine_loss_l2_bidirectional(
+                coord_offset0,
+                coord_offset1,
+                coord_offset0_gt,
+                coord_offset1_gt,
+                correct_mask,
+            )
+            return offset_loss
+
+    def compute_fine_loss_v2(self, data):
+        # 1. Compute loss for offset prediction in fine matching
+        coord_offset = data["coord_offset_f"]
+        coord_offset_gt = data["coord_offset_f1_gt"]
+        # correct_mask tells you which pair to compute fine-loss
+        correct_mask = (
+            torch.linalg.norm(coord_offset_gt - 1, ord=float("inf"), dim=1)
             < self.correct_thr
         )
 
@@ -73,11 +99,7 @@ class MAFF_Loss(nn.Module):
             return None, None
         else:
             offset_loss = None
-            if self.config["FINE_TYPE"] == "l2_std":
-                offset_loss = self._compute_fine_loss_l2_std(
-                    coord_offset, coord_offset_gt, std, correct_mask
-                )
-            elif self.config["FINE_TYPE"] == "l2":
+            if self.config["FINE_TYPE"] == "l2":
                 offset_loss = self._compute_fine_loss_l2(
                     coord_offset, coord_offset_gt, correct_mask
                 )
@@ -119,27 +141,25 @@ class MAFF_Loss(nn.Module):
         ).mean()
         return loss
 
-    def _compute_fine_loss_l2_std(
-        self, coord_offset_f, coord_offset_f_gt, std, correct_mask
+    def _compute_fine_loss_l2_bidirectional(
+        self,
+        coord_offset_f0,
+        coord_offset_f1,
+        coord_offset_f0_gt,
+        coord_offset_f1_gt,
+        correct_mask,
     ):
-        """
-        Args:
-            expec_f (torch.Tensor): [M, 2] <x, y>
-            expec_f_gt (torch.Tensor): [M, 2] <x, y>
-            std (torch.Tensor): [M]
-            correct_mask (torch.Tensor): (M)
-        """
-        # use std as weight that measures uncertainty
-        inverse_std = 1.0 / torch.clamp(std, min=1e-10)
-        weight = (
-            inverse_std / torch.mean(inverse_std)
-        ).detach()  # avoid minizing loss through increase std
-        # l2 loss with std
+        correct_mask0 = (
+            torch.linalg.norm(coord_offset_f0_gt - 1, ord=float("inf"), dim=1)
+            < self.correct_thr
+        )
         offset_l2 = (
-            (coord_offset_f_gt[correct_mask] - coord_offset_f[correct_mask]) ** 2
-        ).sum(-1)
-        loss = (offset_l2 * weight[correct_mask]).mean()
-        return loss
+            (coord_offset_f0_gt[correct_mask0] - coord_offset_f0[correct_mask0]) ** 2
+        ).sum(-1).mean() + (
+            (coord_offset_f1_gt[correct_mask] - coord_offset_f1[correct_mask]) ** 2
+        ).sum(-1).mean()
+
+        return 0.5 * offset_l2
 
     def _compute_fine_loss_l2(self, coord_offset_f, coord_offset_f_gt, correct_mask):
         """
@@ -182,7 +202,7 @@ class MAFF_Loss(nn.Module):
             c_weight = None
         return c_weight
 
-    def forward(self, data):
+    def forward_v1(self, data):
         """
         Update:
             data (dict): update{
@@ -208,7 +228,46 @@ class MAFF_Loss(nn.Module):
 
         # 2. Fine-level loss
         loss_f = torch.tensor(0.0, device=sim_matrix.device)
-        loss_f1, loss_f2 = self.compute_fine_loss(data=data)
+        loss_f1 = self.compute_fine_loss_v1(data=data)
+        if loss_f1 is not None and loss_f1.item() != torch.nan:
+            loss_f += loss_f1
+            loss_scalars.update({"loss_f1": loss_f1.clone().detach().cpu()})
+        else:
+            loss_scalars.update({"loss_f1": torch.tensor(0.0).clone().detach().cpu()})
+        loss_scalars.update({"loss_f2": torch.tensor(0.0).clone().detach().cpu()})
+
+        loss += loss_f * self.fine_weight
+
+        # 3. Total loss
+        data.update({"loss": loss, "loss_scalars": loss_scalars})
+
+    def forward_v2(self, data):
+        """
+        Update:
+            data (dict): update{
+                'loss': [1] the reduced loss across a batch,
+                'loss_scalars' (dict): loss scalars for tensorboard_record
+            }
+        """
+        loss_scalars = {}
+        # 1. Coarse-level loss
+        # Get conf matrix from sim matrix using dual softmax operator
+        sim_matrix = data["sim_matrix"]
+        conf_matrix = F.softmax(sim_matrix, 1) * F.softmax(sim_matrix, 2)
+        data.update({"conf_matrix": conf_matrix})
+        loss = torch.tensor(0.0, device=sim_matrix.device)
+
+        # similarity loss
+        loss_c = self.compute_coarse_loss(data)
+        if loss_c is not None:
+            loss += loss_c * self.coarse_weight
+            loss_scalars.update({"loss_c": loss_c.clone().detach().cpu()})
+        else:
+            loss_scalars.update({"loss_c": torch.tensor(0.0).clone().detach().cpu()})
+
+        # 2. Fine-level loss
+        loss_f = torch.tensor(0.0, device=sim_matrix.device)
+        loss_f1, loss_f2 = self.compute_fine_loss_v2(data=data)
         if loss_f1 is not None:
             loss_f += loss_f1
             loss_scalars.update({"loss_f1": loss_f1.clone().detach().cpu()})
@@ -219,8 +278,14 @@ class MAFF_Loss(nn.Module):
             loss_scalars.update({"loss_f2": loss_f2.clone().detach().cpu()})
         else:
             loss_scalars.update({"loss_f2": torch.tensor(0.0).clone().detach().cpu()})
-        
+
         loss += loss_f * self.fine_weight
 
         # 3. Total loss
         data.update({"loss": loss, "loss_scalars": loss_scalars})
+
+    def forward(self, data):
+        if self.version == "v1":
+            self.forward_v1(data)
+        elif self.version == "v2":
+            self.forward_v2(data)

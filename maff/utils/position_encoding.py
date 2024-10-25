@@ -191,15 +191,18 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
         for s, single_scale in enumerate(x1):
             batch_size = single_scale.shape[0]
             for b in range(batch_size):
-                single_scale[b] = single_scale[b] + getattr(
-                    self, f"all_scales_pos_emb_{s}"
+                C = single_scale[b].shape[0]
+                single_scale[b] = (
+                    single_scale[b] + getattr(self, f"all_scales_pos_emb_{s}")[:C]
                 )
 
         for s, single_scale in enumerate(x2):
             batch_size = single_scale.shape[0]
             for b in range(batch_size):
-                single_scale[b] = single_scale[b] + getattr(
-                    self, f"all_scales_pos_emb_{s + self.num_scales}"
+                C = single_scale[b].shape[0]
+                single_scale[b] = (
+                    single_scale[b]
+                    + getattr(self, f"all_scales_pos_emb_{s + self.num_scales}")[:C]
                 )
         return x1, x2
 

@@ -6,7 +6,12 @@ from pathlib import Path
 from loguru import logger
 import torch
 from torch.optim import Adam, AdamW
-from torch.optim.lr_scheduler import MultiStepLR, CosineAnnealingLR, ExponentialLR
+from torch.optim.lr_scheduler import (
+    MultiStepLR,
+    CosineAnnealingLR,
+    ExponentialLR,
+    CosineAnnealingWarmRestarts,
+)
 import pytorch_lightning as pl
 from pytorch_lightning.profilers.profiler import Profiler
 from pytorch_lightning.profilers import PassThroughProfiler
@@ -15,7 +20,7 @@ from contextlib import contextmanager
 import time
 
 from maff.utils.supervision import compute_supervision_coarse, compute_supervision_fine
-from maff.maff import MAFF
+from maff.maff_v1 import MAFF_v1
 from maff.maff_v2 import MAFF_v2
 from maff.loss import MAFF_Loss
 from utils.metrics import (
@@ -26,6 +31,15 @@ from utils.metrics import (
 from utils.comm import all_gather, gather
 from utils.misc import flattenList
 from utils.plotting import make_matching_figures
+
+
+test_timer_list = [
+    "feat_extract_time",
+    "coarse_time",
+    "correlation_time",
+    "fine_scan_time",
+    "fine_time",
+]
 
 
 @contextmanager
@@ -74,7 +88,7 @@ class PL_MAFF(pl.LightningModule):
         self.show_gt_matched_fine_on_val = config.MODEL.SHOW_GT_MATCHED_FINE
 
         if config["MODEL"]["VERSION"] == "v1":
-            _MAFF = MAFF
+            _MAFF = MAFF_v1
         elif config["MODEL"]["VERSION"] == "v2":
             _MAFF = MAFF_v2
         self.maff = _MAFF(config=config["MODEL"])
@@ -95,7 +109,9 @@ class PL_MAFF(pl.LightningModule):
         self.test_outputs = []
         self.train_forward_times = []
         self.val_forward_times = []
+        self.val_parts_times = {}
         self.test_forward_times = []
+        self.test_parts_times = {}
 
         self.n_vals_plot = max(
             config.TRAINER.N_VAL_PAIRS_TO_PLOT // config.TRAINER.WORLD_SIZE, 1
@@ -124,7 +140,9 @@ class PL_MAFF(pl.LightningModule):
             )
 
         # learning rate scheduler
-        scheduler = {"interval": self.config.TRAINER.SCHEDULER_INTERVAL}
+        scheduler = {
+            "interval": self.config.TRAINER.SCHEDULER_INTERVAL,
+        }
         if self.config.TRAINER.SCHEDULER == "MultiStepLR":
             scheduler.update(
                 {
@@ -151,6 +169,18 @@ class PL_MAFF(pl.LightningModule):
                     )
                 }
             )
+        elif self.config.TRAINER.SCHEDULER == "CosineAnnealingWarmRestarts":
+            scheduler.update(
+                {
+                    "scheduler": CosineAnnealingWarmRestarts(
+                        optimizer=optimizer,
+                        T_0=self.config.TRAINER.COSAWR_T0,
+                        T_mult=self.config.TRAINER.COSAWR_TMULT,
+                        eta_min=self.config.TRAINER.COSAWR_ETAMIN,
+                    ),
+                    "interval": "step",
+                }
+            )
         else:
             # Default: MultiStepLR
             scheduler.update(
@@ -162,7 +192,7 @@ class PL_MAFF(pl.LightningModule):
                     )
                 }
             )
-        return [optimizer], [scheduler]
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
     def optimizer_step(
         self,
@@ -200,9 +230,8 @@ class PL_MAFF(pl.LightningModule):
             self.maff(batch, training=training)
             end_time = time.perf_counter()
 
-        if self.config.LOSS.FINE_WEIGHT is not None:
-            with self.profiler.profile("Compute fine supervision"):
-                compute_supervision_fine(batch, config=self.config)
+        with self.profiler.profile("Compute fine supervision"):
+            compute_supervision_fine(batch, config=self.config)
 
         if training:
             with self.profiler.profile("Compute losses"):
@@ -273,10 +302,18 @@ class PL_MAFF(pl.LightningModule):
         return {"loss": batch["loss"]}
 
     def on_train_epoch_start(self):
-        if self.trainer.current_epoch == self.first_stage_epochs:
+        if self.trainer.current_epoch == 0:
+            # Print model summary
+            if self.trainer.global_rank == 0:
+                print(self.maff)
+            self.loss.fine_weight = 1.0
+            self.loss.coarse_weight = 0.001
             # set fine feature loglikehood supervision to zero
+        if self.trainer.current_epoch == self.first_stage_epochs:
             self.loss.turn_off_fine_feature_likelihood = True
             self.loss.turn_off_conf_mask_loss = True
+            self.loss.fine_weight = 1.0
+            self.loss.coarse_weight = 1.0
 
     def on_train_epoch_end(self):
         self.training_outputs.clear()
@@ -284,7 +321,9 @@ class PL_MAFF(pl.LightningModule):
 
         # time
         if self.trainer.global_rank == 0 and len(self.train_forward_times) > 0:
-            avg_forward_time = sum(self.train_forward_times) / len(self.train_forward_times)
+            avg_forward_time = sum(self.train_forward_times) / len(
+                self.train_forward_times
+            )
             self.logger.experiment.add_scalar(
                 "train/avg_forward_time", avg_forward_time, self.trainer.current_epoch
             )
@@ -292,6 +331,14 @@ class PL_MAFF(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         self._trainval_inference(batch, training=self.show_gt_matched_fine_on_val)
+
+        # All timers
+        keys = test_timer_list
+        if len(self.val_parts_times.keys()) == 0:
+            self.val_parts_times = {k: [] for k in keys}
+        for key in keys:
+            if key in batch.keys():
+                self.val_parts_times[key].append(batch[key])
 
         ret_dict, _ = self._compute_metrics(batch)
 
@@ -371,11 +418,29 @@ class PL_MAFF(pl.LightningModule):
                             )
                 # time
                 if len(self.val_forward_times) > 0:
-                    avg_forward_time = self.calculate_trimmed_mean(self.val_forward_times)
+                    avg_forward_time = self.calculate_trimmed_mean(
+                        self.val_forward_times
+                    )
                     self.logger.experiment.add_scalar(
-                        "test/avg_forward_time", avg_forward_time, self.trainer.current_epoch
+                        "test/avg_forward_time",
+                        avg_forward_time,
+                        self.trainer.current_epoch,
                     )
                     self.val_forward_times.clear()
+                keys = test_timer_list
+                if len(self.val_parts_times.keys()) and len(
+                    self.val_parts_times[keys[0]]
+                ):
+                    for k in keys:
+                        avg_time_for_this_part = self.calculate_trimmed_mean(
+                            self.val_parts_times[k]
+                        )
+                        self.logger.experiment.add_scalar(
+                            f"test/{k}",
+                            avg_time_for_this_part,
+                            self.trainer.current_epoch,
+                        )
+                        self.val_parts_times[k].clear()
 
         self.validation_outputs.clear()
         torch.cuda.empty_cache()
@@ -385,12 +450,20 @@ class PL_MAFF(pl.LightningModule):
             self.maff.reparameter()
             self.reparameter = True
 
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch: dict, batch_idx):
         # inference
         start_time = time.perf_counter()
         with torch.inference_mode(True):
             self.maff(batch)
         end_time = time.perf_counter()
+
+        # All timers
+        keys = test_timer_list
+        if len(self.test_parts_times.keys()) == 0:
+            self.test_parts_times = {k: [] for k in keys}
+        for key in keys:
+            if key in batch.keys():
+                self.test_parts_times[key].append(batch[key])
 
         # Timer
         local_time = torch.tensor(end_time - start_time, device=self.device)
@@ -448,6 +521,19 @@ class PL_MAFF(pl.LightningModule):
             if len(self.test_forward_times) > 0:
                 avg_forward_time = self.calculate_trimmed_mean(self.test_forward_times)
                 print(f"Avg forward time: {avg_forward_time*1000: 8.4}ms")
+                self.test_forward_times.clear()
+            keys = test_timer_list
+            if len(self.test_parts_times.keys()) and len(
+                self.test_parts_times[keys[0]]
+            ):
+                for k in keys:
+                    avg_time_for_this_part = self.calculate_trimmed_mean(
+                        self.test_parts_times[k]
+                    )
+                    print(
+                        f"Avg forward time for {k}: {avg_time_for_this_part*1000: 8.4}ms"
+                    )
+                    self.test_parts_times[k].clear()
             print(self.profiler.summary())
             val_metrics_4tb = aggregate_metrics(
                 metrics, self.config.TRAINER.EPI_ERR_THR

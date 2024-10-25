@@ -227,45 +227,69 @@ def spvs_fine(data, config):
             "sim_matrix_f_gt": [M, W, W]
         }
     """
-    device = data["image0"].device
-    # 1. misc
-    # w_pt0_i, pt1_i = data.pop('spv_w_pt0_i'), data.pop('spv_pt1_i')
-    w_pt0_i, pt1_i = data["spv_w_pt0_i"], data["spv_pt1_i"]
+    fine_scale = (
+        1
+        if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
+        else config["MODEL"]["FINE_SCALE"]
+    )
+    absolute_scale0 = fine_scale * data["scale0"] if "scale0" in data else fine_scale
+    absolute_scale1 = fine_scale * data["scale1"] if "scale1" in data else fine_scale
 
-    # 2. get coarse prediction
-    b_ids, i_ids, j_ids = data["b_idx_c"], data["i_idx_c"], data["j_idx_c"]
-
-    # 3. compute gt
-    if config.MODEL.VERSION == "v1":
-        scale = (
-            1
-            if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
-            else config["MODEL"]["FINE_SCALE"]
-        )
-    elif config.MODEL.VERSION == "v2":
-        scale = (
-            1
-            if config["MODEL"]["PIXEL_SHUFFLE_REFINEMENT"]
-            else config["MODEL"]["BACKBONE"]["RESOLUTION"][0]
-        )
+    # Get predicted fine coordinates of image0 and batch_indices
+    fine_coord_0 = data["fine_coord_0"]  # [M, 2]
+    fine_coord_1 = data["fine_coord_1"]  # [M, 2]
+    coarse_coord_0 = data["coarse_coord_0"]  # [M, 2]
+    coarse_coord_1 = data["coarse_coord_1"]  # [M, 2]
+    offset_f_0 = torch.zeros_like(fine_coord_0)  # [M, 2]
+    offset_f_1 = torch.zeros_like(fine_coord_1)  # [M, 2]
     radius = data["sim_matrix_f"].shape[-1] / 2
-    scale = scale * data["scale1"][b_ids] if "scale1" in data else scale
-    # `coord_offset_f_gt` might exceed the window, i.e. abs(*) > 1, which would be filtered later
-    expec_f_gt = (
-        (w_pt0_i[b_ids, i_ids] - pt1_i[b_ids, j_ids]) / scale / radius
-    )  # [M, 2]
-    data.update({"coord_offset_f_gt": expec_f_gt})
-    correct_mask = torch.linalg.norm(expec_f_gt, ord=float("inf"), dim=1) < 1.0
+    batch_idx = data["b_idx_c"]  # [M]
+    # Warp all fine coordinates of image0 on image1
+    sorted_batch_unique = batch_idx.unique(sorted=True)
+    for b in sorted_batch_unique:
+        batch_mask = batch_idx == b
+        # Offset on image 0 based on fine coord of image 1
+        fine_coord_1_single_batch = fine_coord_1[batch_mask].unsqueeze(0)
+        _, target_fine_coord_0_single_batch = warp_kpts(
+            fine_coord_1_single_batch,
+            data["depth1"][b].unsqueeze(0),
+            data["depth0"][b].unsqueeze(0),
+            data["T_1to0"][b].unsqueeze(0),
+            data["K1"][b].unsqueeze(0),
+            data["K0"][b].unsqueeze(0),
+        )
+        offset_f_0[batch_mask] = (
+            (target_fine_coord_0_single_batch[0] - coarse_coord_0[batch_mask])
+            / absolute_scale0[b]
+            / radius
+        )
+        # Offset on image 1 based on fine coord of image 0
+        fine_coord_0_single_batch = fine_coord_0[batch_mask].unsqueeze(0)  # 1, M, 2
+        _, target_fine_coord_1_single_batch = warp_kpts(
+            fine_coord_0_single_batch,
+            data["depth0"][b].unsqueeze(0),
+            data["depth1"][b].unsqueeze(0),
+            data["T_0to1"][b].unsqueeze(0),
+            data["K0"][b].unsqueeze(0),
+            data["K1"][b].unsqueeze(0),
+        )
+        offset_f_1[batch_mask] = (
+            (target_fine_coord_1_single_batch[0] - coarse_coord_1[batch_mask])
+            / absolute_scale1[b]
+            / radius
+        )
 
-    # 4. compute sim_matrix_f_gt
-    M = expec_f_gt.shape[0]
+    # Get correct mask
+    correct_mask = torch.linalg.norm(offset_f_1, ord=float("inf"), dim=1) < 2.0
+    # Get similarity matrix for fine level window
     W = int(data["sim_matrix_f"].shape[-1])
-    sim_matrix_f_gt = torch.zeros(M, W, W, device=device)
-    expec_f_gt_idx = ((expec_f_gt + 1) / 2 * (W - 1)).round().long()
+    sim_matrix_f_gt = torch.zeros_like(data["sim_matrix_f"])
+    expec_f_gt_idx = ((offset_f_1) / 2 * (W - 1)).round().long()
     sim_matrix_f_gt[
         correct_mask, expec_f_gt_idx[correct_mask, 0], expec_f_gt_idx[correct_mask, 1]
     ] = 1
-
+    data.update({"coord_offset_f0_gt": offset_f_0})
+    data.update({"coord_offset_f1_gt": offset_f_1})
     data.update({"sim_matrix_f_gt": sim_matrix_f_gt})
 
 

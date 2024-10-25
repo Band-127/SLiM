@@ -154,33 +154,33 @@ def error_auc(errors, thresholds):
         errors (list): [N,]
         thresholds (list)
     """
-    # errors = [0] + sorted(list(errors))
-    # recall = list(np.linspace(0, 1, len(errors)))
+    errors = [0] + sorted(list(errors))
+    recall = list(np.linspace(0, 1, len(errors)))
 
-    # aucs = []
-    # thresholds = [5, 10, 20]
-    # for thr in thresholds:
-    #     last_index = np.searchsorted(errors, thr)
-    #     y = recall[:last_index] + [recall[last_index - 1]]
-    #     x = errors[:last_index] + [thr]
-    #     aucs.append(np.trapz(y, x) / thr)
-
-    # return {f"auc@{t}": auc for t, auc in zip(thresholds, aucs)}
-    errors = np.array(errors)
-    sort_idx = np.argsort(errors)
-    errors = errors[sort_idx]
-    recall = (np.arange(len(errors)) + 1) / len(errors)
-    errors = np.r_[0., errors]
-    recall = np.r_[0., recall]
-    
-    aucs = {}
+    aucs = []
+    thresholds = [5, 10, 20]
     for thr in thresholds:
         last_index = np.searchsorted(errors, thr)
-        y = np.r_[recall[:last_index], recall[last_index-1]]
-        x = np.r_[errors[:last_index], thr]
-        aucs[f"auc@{thr}"] = np.trapz(y, x=x) / thr
+        y = recall[:last_index] + [recall[last_index - 1]]
+        x = errors[:last_index] + [thr]
+        aucs.append(np.trapz(y, x) / thr)
+
+    return {f"auc@{t}": auc for t, auc in zip(thresholds, aucs)}
+    # errors = np.array(errors)
+    # sort_idx = np.argsort(errors)
+    # errors = errors[sort_idx]
+    # recall = (np.arange(len(errors)) + 1) / len(errors)
+    # errors = np.r_[0., errors]
+    # recall = np.r_[0., recall]
     
-    return aucs
+    # aucs = {}
+    # for thr in thresholds:
+    #     last_index = np.searchsorted(errors, thr)
+    #     y = np.r_[recall[:last_index], recall[last_index-1]]
+    #     x = np.r_[errors[:last_index], thr]
+    #     aucs[f"auc@{thr}"] = np.trapz(y, x=x) / thr
+    
+    # return aucs
 
 
 def epidist_prec(errors, thresholds, ret_dict=False):

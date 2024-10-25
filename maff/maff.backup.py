@@ -11,7 +11,7 @@ from maff.mamba.MambaEncoder import MultiScaleMambaEncoder
 from maff.transformer.transformer import LocalFeatureTransformer
 from maff.utils.position_encoding import DualMultiScaleSinePositionalEncoding
 from maff.utils.channel_alignment import ChannelAlignment
-from maff.utils.conf_mask_head import ConfMaskHead
+from maff.utils.conf_mask_head import ConfHead
 from maff.utils.pixel_shuffle_head import PixelShuffleHead
 from maff.utils.fine_refinement import FineRefinement
 
@@ -100,7 +100,7 @@ class MAFF(nn.Module):
         )
 
         # 8. Confidence mask head
-        self.conf_mask_head = ConfMaskHead(self.d_model)
+        self.conf_mask_head = ConfHead(self.d_model)
 
     def forward(self, data: dict, training: bool = False):
         """

@@ -33,6 +33,9 @@ class CoarseEncoder(nn.Module):
                 for _ in range(num_layers)
             ]
         )
+        self.layer_norms = nn.ModuleList(
+            [nn.LayerNorm(in_output_dim) for _ in range(num_layers)]
+        )
 
         # Initialize weights
         with torch.no_grad():
@@ -56,12 +59,18 @@ class CoarseEncoder(nn.Module):
         x0_shape = x0.shape[2:]  # H, W
         x1_shape = x1.shape[2:]  # H, W
 
-        for layer in self.layers:
+        for idx, layer in enumerate(self.layers):
             # Rearrange features into (B, H*W, C) and (B, W*H, C), two directions
             x0_hw = rearrange(x0, "b c h w -> b (h w) c")
             x1_hw = rearrange(x1, "b c h w -> b (h w) c")
             x0_wh = rearrange(x0, "b c h w -> b (w h) c")
             x1_wh = rearrange(x1, "b c h w -> b (w h) c")
+
+            # Layer norms
+            x0_hw = self.layer_norms[idx](x0_hw)
+            x1_hw = self.layer_norms[idx](x1_hw)
+            x0_wh = self.layer_norms[idx](x0_wh)
+            x1_wh = self.layer_norms[idx](x1_wh)
 
             # Mamba forward, including another two directions, which is the flip of the original two directions
             x0_hw, x1_hw, x0_wh, x1_wh = layer(x0_hw, x1_hw, x0_wh, x1_wh)

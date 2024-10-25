@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 
 @torch.no_grad()
@@ -6,6 +7,7 @@ def warp_kpts(kpts0, depth0, depth1, T_0to1, K0, K1):
     """Warp kpts0 from I0 to I1 with depth, K and Rt
     Also check covisibility and depth consistency.
     Depth is consistent if relative error < 0.2 (hard-coded).
+    Modified code from https://github.com/zju3dv/LoFTR, add grid_sample to get depth from continuous points.
 
     Args:
         kpts0 (torch.Tensor): [N, L, 2] - <x, y>,
@@ -18,16 +20,23 @@ def warp_kpts(kpts0, depth0, depth1, T_0to1, K0, K1):
         calculable_mask (torch.Tensor): [N, L]
         warped_keypoints0 (torch.Tensor): [N, L, 2] <x0_hat, y1_hat>
     """
-    kpts0_long = kpts0.round().long()
+    # Get depth using grid sample from torch
+    h, w = depth0.shape[1:]
+    kpts0_normalized = kpts0.clone()
+    kpts0_normalized[:, :, 0] = (kpts0[:, :, 0] / (w - 1)) * 2 - 1
+    kpts0_normalized[:, :, 1] = (kpts0[:, :, 1] / (h - 1)) * 2 - 1
 
-    # Sample depth, get calculable_mask on depth != 0
-    kpts0_depth = torch.stack(
-        [
-            depth0[i, kpts0_long[i, :, 1], kpts0_long[i, :, 0]]
-            for i in range(kpts0.shape[0])
-        ],
-        dim=0,
-    )  # (N, L)
+    kpts0_normalized = kpts0_normalized.unsqueeze(1)  # (N, 1, L, 2)
+    depth0 = depth0.unsqueeze(1)  # Add depth channel (N, 1, H, W)
+    kpts0_depth = F.grid_sample(
+        depth0,
+        kpts0_normalized,
+        mode="bilinear",
+        padding_mode="zeros",
+        align_corners=False,
+    )
+    kpts0_depth = kpts0_depth.squeeze(1).squeeze(1)  # (N, L)
+    # The rest code are same as in LoFTR project
     nonzero_mask = kpts0_depth != 0
 
     # Unproject
