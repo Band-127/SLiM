@@ -5,8 +5,6 @@ from torch.nn import functional as F
 from yacs.config import CfgNode as CN
 from einops.einops import rearrange
 import kornia.geometry.subpix.dsnt as dsnt
-from kornia.utils.grid import create_meshgrid
-
 from maff.backbone import build_backbone
 from maff.mamba.MambaEncoder import MultiScaleMambaEncoder
 from maff.utils.position_encoding import DualMultiScaleSinePositionalEncoding
