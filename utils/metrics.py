@@ -60,7 +60,7 @@ def compute_symmetrical_epipolar_errors(data):
     Tx = numeric.cross_product_matrix(data["T_0to1"][:, :3, 3])
     E_mat = Tx @ data["T_0to1"][:, :3, :3]
 
-    m_bids = data["b_idx_c"]
+    m_bids = data["b_idx_it"]
     pts0 = data["fine_coord_0"]
     pts1 = data["fine_coord_1"]
 
@@ -120,7 +120,7 @@ def compute_pose_errors(data, config):
     conf = config.TRAINER.RANSAC_CONF  # 0.99999
     data.update({"R_errs": [], "t_errs": [], "inliers": []})
 
-    m_bids = data["b_idx_c"].cpu().numpy()
+    m_bids = data["b_idx_it"].cpu().numpy()
     pts0 = data["fine_coord_0"].cpu().numpy()
     pts1 = data["fine_coord_1"].cpu().numpy()
     K0 = data["K0"].cpu().numpy()

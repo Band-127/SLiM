@@ -19,10 +19,9 @@ import torch.distributed as dist
 from contextlib import contextmanager
 import time
 
-from maff.utils.supervision import compute_supervision_coarse, compute_supervision_fine
-from maff.maff_v1 import MAFF_v1
-from maff.maff_v2 import MAFF_v2
-from maff.loss import MAFF_Loss
+from src.utils.supervision import compute_supervision_coarse, compute_supervision_fine
+from src.rcrm_v1 import RCRM_v1
+from src.loss import RCRM_Loss
 from utils.metrics import (
     compute_symmetrical_epipolar_errors,
     compute_pose_errors,
@@ -60,7 +59,7 @@ def get_mean_time_across_ranks(local_time):
     return local_time
 
 
-class PL_MAFF(pl.LightningModule):
+class PL_RCRM(pl.LightningModule):
     def __init__(
         self,
         config: CN,
@@ -76,7 +75,7 @@ class PL_MAFF(pl.LightningModule):
             profiler (Profiler, optional): Pytorch Lightning Profiler module. Defaults to None.
             dump_dir (str, optional): Dir to dump testing output. Defaults to None.
         """
-        super(PL_MAFF, self).__init__()
+        super(PL_RCRM, self).__init__()
 
         self.config = config
         self.pretrained_ckpt = pretrained_ckpt
@@ -88,11 +87,9 @@ class PL_MAFF(pl.LightningModule):
         self.show_gt_matched_fine_on_val = config.MODEL.SHOW_GT_MATCHED_FINE
 
         if config["MODEL"]["VERSION"] == "v1":
-            _MAFF = MAFF_v1
-        elif config["MODEL"]["VERSION"] == "v2":
-            _MAFF = MAFF_v2
+            _MAFF = RCRM_v1
         self.maff = _MAFF(config=config["MODEL"])
-        self.loss = MAFF_Loss(config=config["LOSS"])
+        self.loss = RCRM_Loss(config=config["LOSS"])
 
         # Read pretrained checkpoint if exists
         if pretrained_ckpt:
@@ -222,29 +219,32 @@ class PL_MAFF(pl.LightningModule):
         optimizer.zero_grad()
 
     def _trainval_inference(self, batch, training: bool = True):
-        with self.profiler.profile("Compute coarse supervision"):
-            compute_supervision_coarse(batch, coarse_scale=self.coarse_scale)
+        if training:
+            with self.profiler.profile("Compute coarse supervision"):
+                compute_supervision_coarse(
+                    batch, coarse_scale=self.coarse_scale, config=self.config
+                )
 
         with self.profiler.profile("MAFF"):
             start_time = time.perf_counter()
             self.maff(batch, training=training)
             end_time = time.perf_counter()
 
-        with self.profiler.profile("Compute fine supervision"):
-            compute_supervision_fine(batch, config=self.config)
-
         if training:
+            with self.profiler.profile("Compute fine supervision"):
+                compute_supervision_fine(batch, config=self.config)
+
             with self.profiler.profile("Compute losses"):
                 self.loss(batch)
 
         # Timer
-        local_time = torch.tensor(end_time - start_time, device=self.device)
-        mean_time = get_mean_time_across_ranks(local_time)
-        batch.update({"forward_time": mean_time.item()})
+        train_time = torch.tensor(end_time - start_time, device=self.device)
+        mean_train_time = get_mean_time_across_ranks(train_time)
+        batch.update({"forward_time": mean_train_time.item()})
         if training:
-            self.train_forward_times.append(mean_time.item())
+            self.train_forward_times.append(mean_train_time.item())
         else:
-            self.val_forward_times.append(mean_time.item())
+            self.val_forward_times.append(mean_train_time.item())
         torch.cuda.empty_cache()
 
     def _compute_metrics(self, batch):
@@ -260,7 +260,7 @@ class PL_MAFF(pl.LightningModule):
                 # to filter duplicate pairs caused by DistributedSampler
                 "identifiers": ["#".join(rel_pair_names[b]) for b in range(bs)],
                 "epi_errs": [
-                    batch["epi_errs"][batch["b_idx_c"] == b].cpu().numpy()
+                    batch["epi_errs"][batch["b_idx_it"] == b].cpu().numpy()
                     for b in range(bs)
                 ],
                 "R_errs": batch["R_errs"],
@@ -296,6 +296,13 @@ class PL_MAFF(pl.LightningModule):
                 batch["forward_time"],
                 self.global_step * self.num_devices,
             )
+            keys = test_timer_list
+            for k in keys:
+                self.logger.experiment.add_scalar(
+                    f"train/{k}",
+                    batch[k],
+                    self.global_step * self.num_devices,
+                )
 
             self.training_outputs.append(batch["loss"])
 
@@ -306,14 +313,12 @@ class PL_MAFF(pl.LightningModule):
             # Print model summary
             if self.trainer.global_rank == 0:
                 print(self.maff)
-            self.loss.fine_weight = 1.0
-            self.loss.coarse_weight = 0.001
-            # set fine feature loglikehood supervision to zero
+            # self.loss.fine_weight = 10.0
+            # self.loss.coarse_weight = 0.01
         if self.trainer.current_epoch == self.first_stage_epochs:
-            self.loss.turn_off_fine_feature_likelihood = True
             self.loss.turn_off_conf_mask_loss = True
-            self.loss.fine_weight = 1.0
-            self.loss.coarse_weight = 1.0
+            # self.loss.fine_weight = 1.0
+            # self.loss.coarse_weight = 1.0
 
     def on_train_epoch_end(self):
         self.training_outputs.clear()
@@ -484,7 +489,7 @@ class PL_MAFF(pl.LightningModule):
 
         for b_id in range(bs):
             item = {}
-            mask = batch["b_idx_c"] == b_id
+            mask = batch["b_idx_it"] == b_id
             item["pair_names"] = pair_names[b_id]
             item["identifier"] = "#".join(rel_pair_names[b_id])
             for key in keys_to_save:

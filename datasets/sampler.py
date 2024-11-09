@@ -15,7 +15,6 @@ class RandomConcatSampler(Sampler):
     NOTE: Don't re-initialize the sampler between epochs (will lead to repeated samples)
     NOTE: This sampler behaves differently with DistributedSampler.
           It assume the dataset is splitted across ranks instead of replicated.
-    TODO: Add a `set_epoch()` method to fullfill sampling without replacement across epochs.
           ref: https://github.com/PyTorchLightning/pytorch-lightning/blob/e9846dd758cfb1500eb9dba2d86f6912eb487587/pytorch_lightning/trainer/training_loop.py#L373
     """
     def __init__(self,

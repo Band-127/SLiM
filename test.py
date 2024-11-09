@@ -8,8 +8,8 @@ from loguru import logger as loguru_logger
 
 from utils.profiler import build_profiler
 from utils.misc import setup_gpus, get_rank_zero_only_logger
-from maff.lightning_maff import PL_MAFF
-from datasets.overall_dataset import MAFF_Dataset
+from src.lightning_rcrm import PL_RCRM
+from datasets.rcrm_dataset import RCRM_Dataset
 
 # get logger and set as rank zero only(means ony info from rank 1 gpu will be stated out)
 loguru_logger = get_rank_zero_only_logger(loguru_logger)
@@ -65,7 +65,7 @@ def main():
     profiler = build_profiler("inference")
 
     # Lightning module
-    model = PL_MAFF(
+    model = PL_RCRM(
         config=config,
         pretrained_ckpt=latest_ckpt_path + "/" + latest_ckpt,
         profiler=profiler,
@@ -74,7 +74,7 @@ def main():
     loguru_logger.info("MAFF Lightning Module initialized!")
 
     # Lightning data
-    data_module = MAFF_Dataset(config=config)
+    data_module = RCRM_Dataset(config=config)
     loguru_logger.info("MAFF Data Module initialized!")
 
     # Torch Lightning Trainer

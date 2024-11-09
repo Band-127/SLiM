@@ -2,11 +2,14 @@ import torch
 from torch import nn
 from typing import Tuple
 from einops.einops import rearrange
+from src.mamba.MambaEncoder import QuadConcatMambaLayer
 
-from maff.mamba.MambaEncoder import QuadConcatMambaLayer
 
+class CoarseEncoder(nn.Module):
+    """
+    Coarse feature encoder(single scale)
+    """
 
-class FineRefinement(nn.Module):
     def __init__(
         self,
         in_output_dim: int,
@@ -15,8 +18,9 @@ class FineRefinement(nn.Module):
         conv_dim: int,
         delta: int,
         using_mamba2: bool,
-    ):
-        super(FineRefinement, self).__init__()
+    ) -> None:
+        super(CoarseEncoder, self).__init__()
+
         self.layers = nn.ModuleList(
             [
                 QuadConcatMambaLayer(
@@ -29,14 +33,14 @@ class FineRefinement(nn.Module):
                 for _ in range(num_layers)
             ]
         )
+        self.layer_norms = nn.ModuleList(
+            [nn.LayerNorm(in_output_dim) for _ in range(num_layers)]
+        )
 
+        # Initialize weights
         with torch.no_grad():
             for m in self.modules():
-                if isinstance(m, nn.Conv2d):
-                    nn.init.kaiming_normal_(
-                        m.weight, mode="fan_out", nonlinearity="relu"
-                    )
-                elif isinstance(m, nn.LayerNorm):
+                if isinstance(m, nn.LayerNorm):
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
 
@@ -45,23 +49,33 @@ class FineRefinement(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
-            x0 (torch.Tensor): (M, C, H, W)
-            x1 (torch.Tensor): (M, C, H, W)
+            x0 (torch.Tensor): (B, C, H, W)
+            x1 (torch.Tensor): (B, C, H, W)
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: (M, C, H, W)
+            Tuple[torch.Tensor, torch.Tensor]: (B, C, H, W)
         """
+        # Get shapes
         x0_shape = x0.shape[2:]  # H, W
         x1_shape = x1.shape[2:]  # H, W
 
-        for layer in self.layers:
+        for idx, layer in enumerate(self.layers):
+            # Rearrange features into (B, H*W, C) and (B, W*H, C), two directions
             x0_hw = rearrange(x0, "b c h w -> b (h w) c")
             x1_hw = rearrange(x1, "b c h w -> b (h w) c")
             x0_wh = rearrange(x0, "b c h w -> b (w h) c")
             x1_wh = rearrange(x1, "b c h w -> b (w h) c")
 
+            # Layer norms
+            x0_hw = self.layer_norms[idx](x0_hw)
+            x1_hw = self.layer_norms[idx](x1_hw)
+            x0_wh = self.layer_norms[idx](x0_wh)
+            x1_wh = self.layer_norms[idx](x1_wh)
+
+            # Mamba forward, including another two directions, which is the flip of the original two directions
             x0_hw, x1_hw, x0_wh, x1_wh = layer(x0_hw, x1_hw, x0_wh, x1_wh)
 
+            # Rearrange features back to (B, C, H, W)
             x0_hw = rearrange(
                 x0_hw, "b (h w) c -> b c h w", h=x0_shape[0], w=x0_shape[1]
             )
@@ -75,6 +89,7 @@ class FineRefinement(nn.Module):
                 x1_wh, "b (w h) c -> b c h w", h=x1_shape[0], w=x1_shape[1]
             )
 
+            # Fusion
             x0 = 0.5 * (x0_hw + x0_wh)
             x1 = 0.5 * (x1_hw + x1_wh)
 

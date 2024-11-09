@@ -1,5 +1,4 @@
 import math
-import torch
 from pathlib import Path
 import pytorch_lightning as pl
 from pytorch_lightning.tuner.tuning import Tuner
@@ -11,8 +10,8 @@ from loguru import logger as loguru_logger
 from utils.profiler import build_profiler
 from default_config import get_cfg_defaults
 from utils.misc import setup_gpus, get_rank_zero_only_logger
-from maff.lightning_maff import PL_MAFF
-from datasets.overall_dataset import MAFF_Dataset
+from src.lightning_rcrm import PL_RCRM
+from datasets.rcrm_dataset import RCRM_Dataset
 
 # get logger and set as rank zero only(means ony info from rank 1 gpu will be stated out)
 loguru_logger = get_rank_zero_only_logger(loguru_logger)
@@ -45,13 +44,13 @@ def main():
     profiler = build_profiler(config.PROFILER.PROFILER_NAME)
 
     # Lightning module
-    model = PL_MAFF(
+    model = PL_RCRM(
         config=config, pretrained_ckpt=config.PRETRAINED_PATH, profiler=profiler
     )
     loguru_logger.info("MAFF Lightning Module initialized!")
 
     # Lightning data
-    data_module = MAFF_Dataset(config=config)
+    data_module = RCRM_Dataset(config=config)
     loguru_logger.info("MAFF Data Module initialized!")
 
     # TensorBoard Logger

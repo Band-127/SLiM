@@ -3,6 +3,9 @@ from torch import nn
 from .vmamba import VSSM
 import torch.nn.functional as F
 
+VMAMBA_T_PATH = "src/backbone/vssm/pretrained_ckpt/vssm1_tiny_0230s_ckpt_epoch_264.pth"
+VMAMBA_S_PATH = "src/backbone/vssm/pretrained_ckpt/vssm1_small_0229s_ckpt_epoch_240.pth"
+VMAMBA_B_PATH = "src/backbone/vssm/pretrained_ckpt/vssm1_base_0229s_ckpt_epoch_225.pth"
 
 def conv1x1(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
@@ -368,7 +371,7 @@ def build_pretrained_VMamba_T(config):
         imgsize=config["INPUT_SIZE"],
     )
     state_dict = torch.load(
-        "maff/backbone/vssm/pretrained_ckpt/vssm1_tiny_0230s_ckpt_epoch_264.pth"
+        VMAMBA_T_PATH
     )["model"]
     model.load_state_dict(state_dict)
     return model
@@ -436,7 +439,7 @@ def build_pretrained_VMamba_S(config):
         imgsize=config["INPUT_SIZE"],
     )
     state_dict = torch.load(
-        "maff/backbone/vssm/pretrained_ckpt/vssm1_small_0229s_ckpt_epoch_240.pth"
+        VMAMBA_S_PATH
     )["model"]
     model.load_state_dict(state_dict)
     return model
@@ -504,7 +507,7 @@ def build_pretrained_VMamba_B(config):
         imgsize=config["INPUT_SIZE"],
     )
     state_dict = torch.load(
-        "maff/backbone/vssm/pretrained_ckpt/vssm1_base_0229s_ckpt_epoch_225.pth"
+        VMAMBA_B_PATH
     )["model"]
     model.load_state_dict(state_dict)
     return model

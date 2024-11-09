@@ -19,7 +19,7 @@ _CN.DUMP_DIR = "dump/maff_baseline_outdoor"
 _CN.DEVICE = CN()
 _CN.DEVICE.ENABLE_GPU = True        # Whether enable GPUs, default true
 _CN.DEVICE.ENABLE_DDP = True        # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "1,2,3,4,5,7"          # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.GPU_IDX = "2,3,4,5,6,7"          # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
@@ -62,7 +62,7 @@ _CN.DATASET.MGDPT_COARSE_SCALE = None
 
 ########    Dataset Sampler Configurations    ########
 _CN.SAMPLER = CN()
-_CN.SAMPLER.N_SAMPLES_PER_SUBSET = 100
+_CN.SAMPLER.N_SAMPLES_PER_SUBSET = 1
 _CN.SAMPLER.SUBSET_REPLACEMENT = True               # whether sample each scene with replacement or not
 _CN.SAMPLER.SHUFFLE = True                          # whether shuffle samples within epoch
 _CN.SAMPLER.REPEAT = 1                              # how many times to be repeated for training
@@ -124,18 +124,18 @@ _CN.MODEL = CN()
 _CN.MODEL.DEBUG = _CN.DEBUG
 _CN.MODEL.SHOW_GT_MATCHED_FINE = False
 _CN.MODEL.DTYPE = _CN.DTYPE
-_CN.MODEL.VERSION = "v1"                            # options: ["v1", "v2"]
-_CN.MODEL.SCALES_SELECTION = (1, 1, 1, 1)           # E.g. if BACKBONE.RESOLUTION = (2, 4, 8), SCALES_SELECTION = (0, 1, 1), means only 1/4 and 1/8 feature maps are selected for feature fusion
-_CN.MODEL.COARSE_SCALE_IDX = 1
-_CN.MODEL.COARSE_SCALE = None                       # Will be calculated automatically
-_CN.MODEL.FINE_SCALE_IDX = 0
-_CN.MODEL.FINE_SCALE = None                         # Will be calculated automatically
+_CN.MODEL.VERSION = "v1"                            # options: ["v1"]
 _CN.MODEL.DIMENSION = 256
+_CN.MODEL.REFINE_ITERS = 6
+_CN.MODEL.REFINE_LOOKUP_RADIUS = 2
 _CN.MODEL.USING_MAMBA2 = True
+# will be calculated automatically based on backbone
+_CN.MODEL.COARSE_SCALE_IDX = 1
+_CN.MODEL.COARSE_SCALE = None                       
+_CN.MODEL.FINE_SCALE_IDX = 0
+_CN.MODEL.FINE_SCALE = None
 # refinement
-_CN.MODEL.ENABLE_FUSION = False                     # Whether using feature fusion or not
 _CN.MODEL.DISABLE_PE = False                        # Whether using pe before encoder or not
-_CN.MODEL.PIXEL_SHUFFLE_REFINEMENT = True           # Whether using pixel shuffle refinement for fine coordinates generation
 _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT = True         # Whether using depth map to refine conf mask(generate confidence mask from output feature using mlp to mask unwanted area in correlation)
 
 # Feature Backbone
@@ -158,17 +158,6 @@ _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256, 512)                     # option
 _CN.MODEL.BACKBONE.INPUT_SIZE = _CN.IMAGE_SIZE
 _CN.MODEL.BACKBONE.FPN_OUT_CHANNELS = _CN.MODEL.DIMENSION
 
-# Mamba Feature Fusion
-_CN.MODEL.MAMBA_FUSION = CN()
-_CN.MODEL.MAMBA_FUSION.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
-_CN.MODEL.MAMBA_FUSION.INNER_EXPANSION = 2          # Inner dimension expansion rate for mamba, inner dimension=rate*input dimension
-_CN.MODEL.MAMBA_FUSION.CONV_DIM = 4                 # Conv dimension for mamba
-_CN.MODEL.MAMBA_FUSION.DELTA = 16                   # Delta dimension for mamba
-_CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER = 0           # number of "self attn." layer
-_CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER = 2          # number of "cross attn." layer
-_CN.MODEL.MAMBA_FUSION.LAYER_TYPES = ["self"] * _CN.MODEL.MAMBA_FUSION.SELF_NUM_LAYER + \
-                                     ["cross"] * _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER
-
 # Coarse Encoder
 _CN.MODEL.COARSE_ENCODER = CN()
 _CN.MODEL.COARSE_ENCODER.NUM_LAYERS = 1
@@ -177,18 +166,22 @@ _CN.MODEL.COARSE_ENCODER.CONV_DIM = 4
 _CN.MODEL.COARSE_ENCODER.DELTA = 16
 _CN.MODEL.COARSE_ENCODER.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
 
-# Fine Encoder
-_CN.MODEL.FINE_ENCODER = CN()
-_CN.MODEL.FINE_ENCODER.NUM_LAYERS = 2
-_CN.MODEL.FINE_ENCODER.INNER_EXPANSION = 2
-_CN.MODEL.FINE_ENCODER.CONV_DIM = 4
-_CN.MODEL.FINE_ENCODER.DELTA = 16
-_CN.MODEL.FINE_ENCODER.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
+# Recurrent Refinement Unit
+_CN.MODEL.RRU = CN()
+_CN.MODEL.RRU.NUM_LAYERS = 1
+_CN.MODEL.RRU.INNER_EXPANSION = 2
+_CN.MODEL.RRU.CONV_DIM = 3
+_CN.MODEL.RRU.DELTA = 4
+_CN.MODEL.RRU.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
 
 # Coarse matching
 _CN.MODEL.COARSE_MATCHING = CN()
 _CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.3
-_CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 2500
+_CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 2000
+
+# Intermediate matching
+_CN.MODEL.INTERMEDIATE_MATCHING = CN()
+_CN.MODEL.INTERMEDIATE_MATCHING.MAX_MATCHES = 4000
 
 ########    Loss Configurations    ########
 _CN.LOSS = CN()
@@ -201,6 +194,7 @@ _CN.LOSS.FOCAL_GAMMA = 2.0
 _CN.LOSS.FINE_WEIGHT = 1.0
 _CN.LOSS.FINE_TYPE = 'l2'                       # options: ['l2']
 _CN.LOSS.FINE_THR = 1.0
+_CN.LOSS.ITER_DECAY_GAMMA = 0.8
 # CONFIDENCE MASK REFINEMENT
 _CN.LOSS.CONF_MASK_DEPTH_REFINEMENT = _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT
 
@@ -213,67 +207,56 @@ if "VMamba_T" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
     if "modified" not in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
         _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
         _CN.MODEL.BACKBONE.LAYER_DIMS = (24, 96, 192, 384, 768)
-        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
         _CN.MODEL.COARSE_SCALE_IDX = 2
         _CN.MODEL.FINE_SCALE_IDX = 0
     else:
         _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
         _CN.MODEL.BACKBONE.LAYER_DIMS = (192, 384, 768)
-        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1)
         _CN.MODEL.COARSE_SCALE_IDX = 2
         _CN.MODEL.FINE_SCALE_IDX = 0
 elif "VMamba_S" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
     if "modified" not in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
         _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
         _CN.MODEL.BACKBONE.LAYER_DIMS = (24, 96, 192, 384, 768)
-        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
         _CN.MODEL.COARSE_SCALE_IDX = 2
         _CN.MODEL.FINE_SCALE_IDX = 0
     else:
         _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
         _CN.MODEL.BACKBONE.LAYER_DIMS = (96, 192, 384)
-        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1)
         _CN.MODEL.COARSE_SCALE_IDX = 2
         _CN.MODEL.FINE_SCALE_IDX = 0
 elif "VMamba_B" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
     if "modified" not in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
         _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
         _CN.MODEL.BACKBONE.LAYER_DIMS = (32, 128, 256, 512, 1024)
-        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
         _CN.MODEL.COARSE_SCALE_IDX = 2
         _CN.MODEL.FINE_SCALE_IDX = 0
     else:
         _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
         _CN.MODEL.BACKBONE.LAYER_DIMS = (128, 256, 512)
-        _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1)
         _CN.MODEL.COARSE_SCALE_IDX = 2
         _CN.MODEL.FINE_SCALE_IDX = 0
 elif "ResNet18_pretrained" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
     _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
     _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 64, 128, 256, 512)
-    _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
     _CN.MODEL.COARSE_SCALE_IDX = 2
     _CN.MODEL.FINE_SCALE_IDX = 0
 elif "RepVGG" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
     _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
     _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 64, 128, 256, 1280)
-    _CN.MODEL.SCALES_SELECTION = (0, 1, 1, 1, 1)
     _CN.MODEL.COARSE_SCALE_IDX = 2
     _CN.MODEL.FINE_SCALE_IDX = 0
 if "cropped" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
     _CN.MODEL.BACKBONE.RESOLUTION = _CN.MODEL.BACKBONE.RESOLUTION[0: len(_CN.MODEL.BACKBONE.RESOLUTION) - 2]
     _CN.MODEL.BACKBONE.LAYER_DIMS = _CN.MODEL.BACKBONE.LAYER_DIMS[0: len(_CN.MODEL.BACKBONE.LAYER_DIMS) - 2]
-    _CN.MODEL.SCALES_SELECTION = _CN.MODEL.SCALES_SELECTION[0: len(_CN.MODEL.SCALES_SELECTION) - 2]
 if _CN.MODEL.BACKBONE.BACKBONE_TYPE == "RepVGG_cropped":
     _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
     _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256)
-    _CN.MODEL.SCALES_SELECTION = (0, 1, 1)
     _CN.MODEL.COARSE_SCALE_IDX = 2
     _CN.MODEL.FINE_SCALE_IDX = 0
 elif _CN.MODEL.BACKBONE.BACKBONE_TYPE == "RepVGG_pretrained_cropped":
     _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
     _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 64, 128)
-    _CN.MODEL.SCALES_SELECTION = (1, 1, 1)
     _CN.MODEL.COARSE_SCALE_IDX = 2
     _CN.MODEL.FINE_SCALE_IDX = 0
 
@@ -285,23 +268,13 @@ _CN.MODEL.FINE_SCALE = _CN.MODEL.BACKBONE.RESOLUTION[_CN.MODEL.FINE_SCALE_IDX]
 ########    Logger Configurations    ########
 _CN.LOGGER = CN()
 if _CN.MODEL.VERSION == "v1":
-    _CN.LOGGER.LOGGER_NAME = (f"{_CN.DATASET.TRAINVAL_DATA_SOURCE}_{_CN.IMAGE_SIZE}_{_CN.MODEL.SCALES_SELECTION}_") + \
-                            (_CN.MODEL.VERSION + "_") + \
-                            (f"{_CN.MODEL.COARSE_SCALE}_") + \
-                            (f"{_CN.MODEL.FINE_SCALE}_") + \
-                            (f"{_CN.MODEL.COARSE_ENCODER.NUM_LAYERS if not _CN.MODEL.ENABLE_FUSION else _CN.MODEL.MAMBA_FUSION.CROSS_NUM_LAYER}+{_CN.MODEL.FINE_ENCODER.NUM_LAYERS}") + \
-                            (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}_") + \
-                            ("F" if _CN.MODEL.ENABLE_FUSION else "") + \
-                            ("P" if _CN.MODEL.PIXEL_SHUFFLE_REFINEMENT else "") + \
-                            ("D" if _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT else "") + \
-                            ("A" if _CN.DATASET.AUGMENTATION_TYPE is not None else "")
-elif _CN.MODEL.VERSION == "v2":
     _CN.LOGGER.LOGGER_NAME = (f"{_CN.DATASET.TRAINVAL_DATA_SOURCE}_{_CN.IMAGE_SIZE}_") + \
-                            (_CN.MODEL.VERSION + "_") + \
-                            (f"{_CN.MODEL.COARSE_SCALE}_") + \
-                            (f"{_CN.MODEL.COARSE_ENCODER.NUM_LAYERS}+{_CN.MODEL.FINE_ENCODER.NUM_LAYERS}") + \
-                            (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}_") + \
-                            ("P" if _CN.MODEL.PIXEL_SHUFFLE_REFINEMENT else "") + \
+                            (_CN.MODEL.VERSION) + \
+                            (f"_{_CN.MODEL.COARSE_SCALE}") + \
+                            (f"_{_CN.MODEL.FINE_SCALE}") + \
+                            (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}") + \
+                            (f"_C{_CN.MODEL.COARSE_ENCODER.NUM_LAYERS}F{_CN.MODEL.RRU.NUM_LAYERS}") + \
+                            (f"_I{_CN.MODEL.REFINE_ITERS}R{_CN.MODEL.REFINE_LOOKUP_RADIUS}_") + \
                             ("D" if _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT else "") + \
                             ("A" if _CN.DATASET.AUGMENTATION_TYPE is not None else "")
 

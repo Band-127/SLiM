@@ -68,7 +68,11 @@ class MegaDepthDataset(Dataset):
             2000 if depth_padding else None
         )  # the upperbound of depthmaps size in megadepth.
 
-        self.augment_fn = augmentor_builder() if self.mode == "train" and augmentor_builder is not None else None
+        self.augment_fn = (
+            augmentor_builder()
+            if self.mode == "train" and augmentor_builder is not None
+            else None
+        )
         # self.coarse_scale = getattr(kwargs, 'coarse_scale', 0.125)
         self.coarse_scale = coarse_scale
 
@@ -82,7 +86,6 @@ class MegaDepthDataset(Dataset):
         img_name0 = osp.join(self.root_dir, self.scene_info["image_paths"][idx0])
         img_name1 = osp.join(self.root_dir, self.scene_info["image_paths"][idx1])
 
-        # TODO: Support augmentation & handle seeds for each worker correctly.
         image0, mask0, scale0 = read_megadepth_gray(
             img_name0, self.img_resize, self.df, self.img_padding, self.augment_fn
         )
@@ -91,7 +94,7 @@ class MegaDepthDataset(Dataset):
             img_name1, self.img_resize, self.df, self.img_padding, self.augment_fn
         )
         # np.random.choice([self.augment_fn, None], p=[0.5, 0.5]))
-        
+
         # read depth. shape: (h, w)
         if self.mode in ["train", "val"]:
             depth0 = read_megadepth_depth(

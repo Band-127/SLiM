@@ -4,7 +4,7 @@ from torch.nn import functional as F
 from typing import Tuple
 from einops.einops import rearrange
 from typing import List
-from maff.mamba.MambaEncoder import MambaLayer, QuadConcatMambaLayer
+from src.mamba.MambaEncoder import MambaLayer, QuadConcatMambaLayer
 
 
 class QuadTreeFineEncoder(nn.Module):

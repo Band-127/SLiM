@@ -91,7 +91,7 @@ def make_matching_figure(
 
 
 def _make_evaluation_figure(data, b_id, alpha="dynamic"):
-    b_mask = data["b_idx_c"] == b_id
+    b_mask = data["b_idx_it"] == b_id
     conf_thr = _compute_conf_thresh(data)
 
     img0 = (data["image0"][b_id][0].cpu().numpy() * 255).round().astype(np.int32)
@@ -108,7 +108,7 @@ def _make_evaluation_figure(data, b_id, alpha="dynamic"):
     correct_mask = epi_errs < conf_thr
     precision = np.mean(correct_mask) if len(correct_mask) > 0 else 0
     n_correct = np.sum(correct_mask)
-    n_gt_matches = int(data["conf_matrix_gt"][b_id].sum().cpu())
+    n_gt_matches = int(correct_mask.shape[0])
     recall = 0 if n_gt_matches == 0 else n_correct / (n_gt_matches)
     # recall might be larger than 1, since the calculation of conf_matrix_gt
     # uses groundtruth depths and camera poses, but epipolar distance is used here.
@@ -132,7 +132,6 @@ def _make_evaluation_figure(data, b_id, alpha="dynamic"):
 
 
 def _make_confidence_figure(data, b_id):
-    # TODO: Implement confidence figure
     raise NotImplementedError()
 
 

@@ -5,5 +5,4 @@ __pycache__/
 .*/
 dump/*
 logs/tb_logs/*
-sample_match.png
 test.jpg

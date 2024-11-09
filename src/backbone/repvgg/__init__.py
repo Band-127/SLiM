@@ -6,7 +6,7 @@ from .repvgg import (
     create_RepVGG_A1_modified,
 )  # latter same as Efficient LoFTR
 
-backbone_file = "maff/backbone/repvgg/pretrained_ckpt/RepVGG-A1-train.pth"
+backbone_file = "src/backbone/repvgg/pretrained_ckpt/RepVGG-A1-train.pth"
 
 
 def conv1x1(in_planes, out_planes, stride=1):

@@ -14,9 +14,9 @@ from datasets.sampler import RandomConcatSampler
 from utils.augment import get_augmentor_builder
 
 
-class MAFF_Dataset(pl.LightningDataModule):
+class RCRM_Dataset(pl.LightningDataModule):
     def __init__(self, config: CN):
-        super(MAFF_Dataset, self).__init__()
+        super(RCRM_Dataset, self).__init__()
 
         # 1. Read vars
         self.mode = config.OVERALL_MODE
