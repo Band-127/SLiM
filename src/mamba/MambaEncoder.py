@@ -45,13 +45,25 @@ class MambaLayer(nn.Module):
         # vanilla Mamba builder
         self.mamba_base = Mamba2 if self.using_mamba2 else Mamba
 
-        self.mamba_layer = self.mamba_base(
-            d_model=in_output_dim,
-            d_state=16 if self.delta is None else self.delta,
-            d_conv=4 if self.conv_dim is None else self.conv_dim,
-            expand=inner_expansion,
-            device=self.device,
-            dtype=self.dtype,
+        self.mamba_layer = (
+            self.mamba_base(
+                d_model=in_output_dim,
+                d_state=16 if self.delta is None else self.delta,
+                d_conv=4 if self.conv_dim is None else self.conv_dim,
+                expand=inner_expansion,
+                device=self.device,
+                dtype=self.dtype,
+                headdim=int(min(64, in_output_dim // 4)),
+            )
+            if self.using_mamba2
+            else self.mamba_base(
+                d_model=in_output_dim,
+                d_state=16 if self.delta is None else self.delta,
+                d_conv=4 if self.conv_dim is None else self.conv_dim,
+                expand=inner_expansion,
+                device=self.device,
+                dtype=self.dtype,
+            )
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

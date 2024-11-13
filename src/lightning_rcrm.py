@@ -28,7 +28,7 @@ from utils.metrics import (
     aggregate_metrics,
 )
 from utils.comm import all_gather, gather
-from utils.misc import flattenList
+from utils.misc import flattenList, print_params_summary
 from utils.plotting import make_matching_figures
 
 
@@ -87,14 +87,14 @@ class PL_RCRM(pl.LightningModule):
         self.show_gt_matched_fine_on_val = config.MODEL.SHOW_GT_MATCHED_FINE
 
         if config["MODEL"]["VERSION"] == "v1":
-            _MAFF = RCRM_v1
-        self.maff = _MAFF(config=config["MODEL"])
+            _RCRM = RCRM_v1
+        self.rcrm = _RCRM(config=config["MODEL"])
         self.loss = RCRM_Loss(config=config["LOSS"])
 
         # Read pretrained checkpoint if exists
         if pretrained_ckpt:
             state_dict = torch.load(pretrained_ckpt, map_location="cpu")["state_dict"]
-            self.maff.load_state_dict(state_dict, strict=True)
+            self.rcrm.load_state_dict(state_dict, strict=True)
             logger.info(f"Load '{pretrained_ckpt}' as pretrained checkpoint")
 
         # Coarse scale
@@ -227,7 +227,7 @@ class PL_RCRM(pl.LightningModule):
 
         with self.profiler.profile("MAFF"):
             start_time = time.perf_counter()
-            self.maff(batch, training=training)
+            self.rcrm(batch, training=training)
             end_time = time.perf_counter()
 
         if training:
@@ -312,12 +312,12 @@ class PL_RCRM(pl.LightningModule):
         if self.trainer.current_epoch == 0:
             # Print model summary
             if self.trainer.global_rank == 0:
-                print(self.maff)
-            # self.loss.fine_weight = 10.0
-            # self.loss.coarse_weight = 0.01
+                print(self.rcrm)
+                print_params_summary(self.rcrm, recursive=False)
         if self.trainer.current_epoch == self.first_stage_epochs:
             self.loss.turn_off_conf_mask_loss = True
             # self.loss.fine_weight = 1.0
+            # self.loss.intermediate_weight = 0.1
             # self.loss.coarse_weight = 1.0
 
     def on_train_epoch_end(self):
@@ -452,14 +452,14 @@ class PL_RCRM(pl.LightningModule):
 
     def on_test_epoch_start(self):
         if not self.reparameter:
-            self.maff.reparameter()
+            self.rcrm.reparameter()
             self.reparameter = True
 
     def test_step(self, batch: dict, batch_idx):
         # inference
         start_time = time.perf_counter()
         with torch.inference_mode(True):
-            self.maff(batch)
+            self.rcrm(batch)
         end_time = time.perf_counter()
 
         # All timers

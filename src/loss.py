@@ -15,9 +15,14 @@ class RCRM_Loss(nn.Module):
         self.config = config
         self.turn_off_conf_mask_loss = not self.config["CONF_MASK_DEPTH_REFINEMENT"]
         self.coarse_weight = self.config["COARSE_WEIGHT"]
+        self.intermediate_weight = self.config["INTERMEDIATE_WEIGHT"]
         self.fine_weight = self.config["FINE_WEIGHT"]
         self.iter_decay_gamma = self.config["ITER_DECAY_GAMMA"]
         self.version = self.config["VERSION"]
+        self.coarse_alpha = self.config["FOCAL_ALPHA_COARSE"]
+        self.coarse_gamma = self.config["FOCAL_GAMMA_COARSE"]
+        self.intermediate_alpha = self.config["FOCAL_ALPHA_INTERMEDIATE"]
+        self.intermediate_gamma = self.config["FOCAL_GAMMA_INTERMEDIATE"]
 
     def compute_coarse_loss(self, data):
         conf = data["conf_matrix"]
@@ -34,8 +39,8 @@ class RCRM_Loss(nn.Module):
 
         # 1. Compute loss for similarity matrix in coarse matching
         # Focal Loss
-        alpha = self.config["FOCAL_ALPHA"]
-        gamma = self.config["FOCAL_GAMMA"]
+        alpha = self.coarse_alpha
+        gamma = self.coarse_gamma
 
         pos_conf = conf[pos_mask]
         loss = (
@@ -62,8 +67,8 @@ class RCRM_Loss(nn.Module):
         conf_matrix_f = data["conf_matrix_f"]
         conf_matrix_f_gt = data["conf_matrix_f_gt"]
         pos_mask = conf_matrix_f_gt == 1
-        alpha = self.config["FOCAL_ALPHA"]
-        gamma = self.config["FOCAL_GAMMA"]
+        alpha = self.intermediate_alpha
+        gamma = self.intermediate_gamma
         pos_conf = conf_matrix_f[pos_mask]
         loss_f1 = (
             -alpha
@@ -83,7 +88,7 @@ class RCRM_Loss(nn.Module):
         else:
             loss_f2 = torch.tensor(0.0, device=offset.device)
             iters = offset.shape[0]
-            total_offset = 0
+            total_offset = torch.zeros_like(offset[0])
             for i in range(iters):
                 loss_f2 += self.iter_decay_gamma ** (
                     iters - i - 1
@@ -165,7 +170,7 @@ class RCRM_Loss(nn.Module):
         # 2. Fine-level loss
         loss_f1, loss_f2 = self.compute_fine_loss_v1(data=data)
         if loss_f1 is not None and loss_f1.item() != torch.nan:
-            loss += loss_f1 * self.fine_weight
+            loss += loss_f1 * self.intermediate_weight
             loss_scalars.update({"loss_f1": loss_f1.clone().detach().cpu()})
         else:
             loss_scalars.update({"loss_f1": torch.tensor(0.0).clone().detach().cpu()})

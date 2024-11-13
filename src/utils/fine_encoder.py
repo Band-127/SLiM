@@ -5,6 +5,7 @@ from typing import Tuple
 from einops.einops import rearrange
 from typing import List
 from src.mamba.MambaEncoder import MambaLayer, QuadConcatMambaLayer
+from src.utils.misc import LayerNorm2d
 
 
 class QuadTreeFineEncoder(nn.Module):
@@ -217,3 +218,42 @@ class FineEncoder(nn.Module):
             x1 = 0.5 * (x1_hw + x1_wh)
 
         return x0, x1
+
+
+class FineEncoder_conv(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        output_dim: int,
+    ) -> None:
+        super(FineEncoder_conv, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+
+        self.main_conv = nn.Sequential(
+            nn.Conv2d(self.input_dim, self.output_dim, kernel_size=3, padding=1),
+            LayerNorm2d(self.output_dim),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(self.output_dim, self.output_dim, kernel_size=3, padding=1),
+            LayerNorm2d(self.output_dim),
+        )
+
+        self.skip_conv = nn.Conv2d(
+            self.input_dim, self.output_dim, kernel_size=1, padding=0
+        )
+
+        self.output_activation = nn.ReLU(inplace=True)
+
+        # Initialize weights
+        with torch.no_grad():
+            for m in self.modules():
+                if isinstance(m, nn.Conv2d):
+                    nn.init.kaiming_normal_(
+                        m.weight, mode="fan_out", nonlinearity="relu"
+                    )
+                elif isinstance(m, nn.LayerNorm):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        return self.output_activation(self.skip_conv(x) + self.main_conv(x))

@@ -6,6 +6,7 @@ from loguru import _Logger, logger
 from itertools import chain
 
 import torch
+import torch.nn as nn
 from yacs.config import CfgNode as CN
 from pytorch_lightning.utilities import rank_zero_only
 
@@ -95,3 +96,50 @@ def tqdm_joblib(tqdm_object):
     finally:
         joblib.parallel.BatchCompletionCallBack = old_batch_callback
         tqdm_object.close()
+
+
+def format_number(number):
+    """Convert number to appropriate unit representation (K, M, G)"""
+    units = ["", "K", "M", "G"]
+    unit_index = 0
+
+    while number >= 1000 and unit_index < len(units) - 1:
+        number /= 1000
+        unit_index += 1
+
+    if number < 10:
+        return f"{number:.1f}{units[unit_index]}"
+    return f"{int(number)}{units[unit_index]}"
+
+
+def count_parameters(model, indent="", min_params=1, recursive=False):
+    """Count parameters for all nn.Module objects in the model"""
+    total_params = 0
+
+    # Get all attributes
+    for name, module in model.__dict__["_modules"].items():
+        if not isinstance(module, nn.Module) or name.startswith("_"):
+            continue
+
+        # Calculate parameters for current module
+        params = sum(p.numel() for p in module.parameters() if p.requires_grad)
+        if params >= min_params:
+            total_params += params
+            formatted_params = format_number(params)
+            print(f"{indent}{name}: {formatted_params:>8} parameters")
+
+            # Recursively print submodules if enabled
+            if recursive and hasattr(module, "__dict__"):
+                _ = count_parameters(module, indent + "    ", min_params, recursive)
+
+    return total_params
+
+
+def print_params_summary(model, min_params=1, recursive=False):
+    print("\n" + "=" * 90)
+    print("Model Structure and Parameters:")
+    print("-" * 90)
+    total = count_parameters(model, min_params=min_params, recursive=recursive)
+    print("-" * 90)
+    print(f"Total Parameters: {format_number(total)}")
+    print("=" * 90 + "\n", flush=True)

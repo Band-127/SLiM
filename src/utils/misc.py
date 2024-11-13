@@ -11,6 +11,22 @@ class Unsqueeze(nn.Module):
         return x.unsqueeze(self.dim)
 
 
+class LayerNorm2d(nn.Module):
+    def __init__(self, num_channels):
+        super(LayerNorm2d, self).__init__()
+        self.ln = nn.LayerNorm(num_channels)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x (torch.Tensor): (B, C, H, W)
+
+        Returns:
+            torch.Tensor: (B, C, H, W)
+        """
+        return self.ln(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+
+
 def create_grid(row_indices: torch.Tensor, col_indices: torch.Tensor) -> torch.Tensor:
     """
     Create a grid of shape (M, W, W, 2).

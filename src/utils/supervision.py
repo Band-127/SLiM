@@ -160,7 +160,7 @@ def spvs_coarse(data, coarse_scale):
                     1 / scale0[b_idx][0, 1].item(),
                 ),
                 mode="bilinear",
-                align_corners=True,
+                align_corners=False,
             )
         )
         supervision_depth1.append(
@@ -171,7 +171,7 @@ def spvs_coarse(data, coarse_scale):
                     1 / scale1[b_idx][0, 1].item(),
                 ),
                 mode="bilinear",
-                align_corners=True,
+                align_corners=False,
             )
         )
     supervision_depth0 = torch.stack(supervision_depth0, dim=0)[
@@ -485,7 +485,7 @@ def spvs_fine_v1(data, config):
 
     # Get correct mask
     correct_mask = torch.linalg.norm(offset_f_1, ord=float("inf"), dim=1) < (
-        (coarse_scale / fine_scale) / 2 / radius
+        (coarse_scale / fine_scale) / radius
     )
 
     data.update({"correct_mask": correct_mask, "coord_offset_gt": offset_f_1})

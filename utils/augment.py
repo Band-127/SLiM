@@ -82,15 +82,15 @@ class MAFFLiteAug(object):
         self.augmentor = A.Compose(
             [
                 A.ColorJitter(
-                    p=0.25,
+                    p=0.2,
                     brightness=0.2,
                     contrast=0.2,
                     saturation=0.2,
                     hue=0.5,
                 ),
-                A.Blur(p=0.25, blur_limit=(3, 9)),
-                A.ImageCompression(p=0.25, quality_lower=60, quality_upper=80),
-                A.ISONoise(p=0.25),
+                A.Blur(p=0.1, blur_limit=(3, 9)),
+                A.ImageCompression(p=0.1, quality_lower=60, quality_upper=80),
+                A.ISONoise(p=0.1),
             ]
         )
 
