@@ -1,9 +1,0 @@
-# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
-*.log
-*.ckpt
-data/
-__pycache__/
-.vscode/
-dump/*
-logs/tb_logs/*
-cached_data*.pkl
