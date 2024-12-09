@@ -34,10 +34,11 @@ from utils.plotting import make_matching_figures
 
 test_timer_list = [
     "feat_extract_time",
-    "coarse_time",
-    "correlation_time",
-    "fine_scan_time",
     "fine_time",
+    "coarse_time",
+    "coarse_correlation_time",
+    "inter_correlation_time",
+    "refine_time",
 ]
 
 
@@ -85,11 +86,18 @@ class PL_RCRM(pl.LightningModule):
         self.first_stage_epochs = config.TRAINER.FIRST_STAGE_EPOCHS
         self.reparameter = False
         self.show_gt_matched_fine_on_val = config.MODEL.SHOW_GT_MATCHED_FINE
+        self.true_batch_size = (
+            config.LOADER.BATCH_SIZE * config.TRAINER.ACCUMULATE_GRAD_BATCHES
+        )
 
         if config["MODEL"]["VERSION"] == "v1":
             _RCRM = RCRM_v1
         self.rcrm = _RCRM(config=config["MODEL"])
         self.loss = RCRM_Loss(config=config["LOSS"])
+
+        # Set max coarse matches with batch size
+        self.rcrm.max_coarse_matches *= config.LOADER.BATCH_SIZE
+        self.rcrm.max_intermediate_matches *= config.LOADER.BATCH_SIZE
 
         # Read pretrained checkpoint if exists
         if pretrained_ckpt:
@@ -151,11 +159,20 @@ class PL_RCRM(pl.LightningModule):
                 }
             )
         elif self.config.TRAINER.SCHEDULER == "CosineAnnealing":
+            T_max = int(
+                self.config.TRAINER.COSA_TMAX
+                * len(self.trainer.datamodule.train_dataloader())
+                / self.num_devices
+                / self.true_batch_size
+            )
             scheduler.update(
                 {
+                    "interval": "step",
                     "scheduler": CosineAnnealingLR(
-                        optimizer=optimizer, T_max=self.config.TRAINER.COSA_TMAX
-                    )
+                        optimizer=optimizer,
+                        T_max=T_max,
+                        eta_min=self.config.TRAINER.COSA_ETA_MIN,
+                    ),
                 }
             )
         elif self.config.TRAINER.SCHEDULER == "ExponentialLR":
@@ -167,15 +184,21 @@ class PL_RCRM(pl.LightningModule):
                 }
             )
         elif self.config.TRAINER.SCHEDULER == "CosineAnnealingWarmRestarts":
+            T_0 = int(
+                self.config.TRAINER.COSAWR_T0
+                * len(self.trainer.datamodule.train_dataloader())
+                / self.num_devices
+                / self.true_batch_size
+            )
             scheduler.update(
                 {
+                    "interval": "step",
                     "scheduler": CosineAnnealingWarmRestarts(
                         optimizer=optimizer,
-                        T_0=self.config.TRAINER.COSAWR_T0,
+                        T_0=T_0,
                         T_mult=self.config.TRAINER.COSAWR_TMULT,
                         eta_min=self.config.TRAINER.COSAWR_ETAMIN,
                     ),
-                    "interval": "step",
                 }
             )
         else:
@@ -200,11 +223,17 @@ class PL_RCRM(pl.LightningModule):
     ):
         # learning rate warm up
         warmup_step = self.config.TRAINER.WARMUP_STEP
-        if self.trainer.global_step < warmup_step:
+        if (
+            self.trainer.global_step * self.num_devices * self.true_batch_size
+            < warmup_step
+        ):
             if self.config.TRAINER.WARMUP_TYPE == "linear":
                 base_lr = self.config.TRAINER.WARMUP_RATIO * self.config.TRAINER.TRUE_LR
                 self.lr = base_lr + (
-                    self.trainer.global_step / self.config.TRAINER.WARMUP_STEP
+                    self.trainer.global_step
+                    * self.num_devices
+                    * self.true_batch_size
+                    / self.config.TRAINER.WARMUP_STEP
                 ) * abs(self.config.TRAINER.TRUE_LR - base_lr)
                 for pg in optimizer.param_groups:
                     pg["lr"] = self.lr
@@ -280,28 +309,30 @@ class PL_RCRM(pl.LightningModule):
             # scalars
             for k, v in batch["loss_scalars"].items():
                 self.logger.experiment.add_scalar(
-                    f"train/{k}", v, self.global_step * self.num_devices
+                    f"train/{k}",
+                    v,
+                    self.global_step * self.num_devices * self.true_batch_size,
                 )
 
             # num matches
             self.logger.experiment.add_scalar(
                 "train/num_matches",
                 batch["num_matches"],
-                self.global_step * self.num_devices,
+                self.global_step * self.num_devices * self.true_batch_size,
             )
 
             # time
             self.logger.experiment.add_scalar(
                 "train/forward_time",
                 batch["forward_time"],
-                self.global_step * self.num_devices,
+                self.global_step * self.num_devices * self.true_batch_size,
             )
             keys = test_timer_list
             for k in keys:
                 self.logger.experiment.add_scalar(
                     f"train/{k}",
                     batch[k],
-                    self.global_step * self.num_devices,
+                    self.global_step * self.num_devices * self.true_batch_size,
                 )
 
             self.training_outputs.append(batch["loss"])
@@ -314,11 +345,20 @@ class PL_RCRM(pl.LightningModule):
             if self.trainer.global_rank == 0:
                 print(self.rcrm)
                 print_params_summary(self.rcrm, recursive=False)
-        if self.trainer.current_epoch == self.first_stage_epochs:
-            self.loss.turn_off_conf_mask_loss = True
+            # self.rcrm.intermediate_noise_scale = 0.0
             # self.loss.fine_weight = 1.0
             # self.loss.intermediate_weight = 0.1
             # self.loss.coarse_weight = 1.0
+        if self.trainer.current_epoch == self.first_stage_epochs:
+            # self.rcrm.intermediate_noise_scale = (
+            #     self.config.MODEL.INTERMEDIATE_MATCHING.TRAIN_NOISE_SCALE
+            # )
+            # self.loss.fine_weight = 1.0
+            # self.loss.intermediate_weight = 0.01
+            # self.loss.coarse_weight = 1.0
+            self.loss.turn_off_conf_mask_loss = True
+        self.rcrm.train()
+        self.rcrm.initial_forward()
 
     def on_train_epoch_end(self):
         self.training_outputs.clear()
@@ -360,6 +400,10 @@ class PL_RCRM(pl.LightningModule):
                 "figures": figures,
             }
         )
+
+    def on_validation_epoch_start(self):
+        self.rcrm.eval()
+        self.rcrm.initial_forward()
 
     def on_validation_epoch_end(self):
         # handle multiple validation sets
@@ -454,6 +498,8 @@ class PL_RCRM(pl.LightningModule):
         if not self.reparameter:
             self.rcrm.reparameter()
             self.reparameter = True
+        self.rcrm.eval()
+        self.rcrm.initial_forward()
 
     def test_step(self, batch: dict, batch_idx):
         # inference

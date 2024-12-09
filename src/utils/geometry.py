@@ -32,7 +32,6 @@ def warp_kpts(kpts0, depth0, depth1, T_0to1, K0, K1):
         depth0,
         kpts0_normalized,
         mode="bilinear",
-        padding_mode="zeros",
         align_corners=False,
     )
     kpts0_depth = kpts0_depth.squeeze(1).squeeze(1)  # (N, L)

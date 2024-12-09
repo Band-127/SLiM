@@ -1,4 +1,5 @@
 import os
+import time
 import contextlib
 import joblib
 from typing import Union
@@ -143,3 +144,27 @@ def print_params_summary(model, min_params=1, recursive=False):
     print("-" * 90)
     print(f"Total Parameters: {format_number(total)}")
     print("=" * 90 + "\n", flush=True)
+
+
+class Timer:
+    def __init__(self, process_name=""):
+        self.process_name = process_name
+
+    def __enter__(self):
+        self.start = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.end = time.perf_counter()
+        self.interval = self.end - self.start
+        self._print_time()
+
+    def _print_time(self):
+        process_str = f"[{self.process_name}] " if self.process_name else ""
+        if self.interval < 1:
+            print(f"{process_str}Elapsed time: {self.interval * 1000:.2f} ms")
+        elif self.interval < 60:
+            print(f"{process_str}Elapsed time: {self.interval:.2f} s")
+        else:
+            minutes, seconds = divmod(self.interval, 60)
+            print(f"{process_str}Elapsed time: {int(minutes)} min {seconds:.2f} s")

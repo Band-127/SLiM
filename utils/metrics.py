@@ -5,7 +5,6 @@ from collections import OrderedDict
 from loguru import logger
 from kornia.geometry.epipolar import numeric
 from kornia.geometry.conversions import convert_points_to_homogeneous
-from sklearn.metrics import auc
 
 
 # --- METRICS ---
@@ -144,6 +143,32 @@ def compute_pose_errors(data, config):
             data["t_errs"].append(t_err)
             data["inliers"].append(inliers)
 
+        # bpts_0 = pts0[mask]
+        # bpts_1 = pts1[mask]
+        # for _ in range(config.TRAINER.RANSAC_TIMES):
+        #     shuffling = np.random.permutation(np.arange(len(bpts_0)))
+        #     ret = estimate_pose(
+        #         bpts_0[shuffling],
+        #         bpts_1[shuffling],
+        #         K0[bs],
+        #         K1[bs],
+        #         pixel_thr,
+        #         conf=conf,
+        #     )
+
+        #     if ret is None:
+        #         data["R_errs"].append(np.inf)
+        #         data["t_errs"].append(np.inf)
+        #         data["inliers"].append(np.array([]).astype(np.bool_))
+        #     else:
+        #         R, t, inliers = ret
+        #         t_err, R_err = relative_pose_error(
+        #             T_0to1[bs], R, t, ignore_gt_t_thr=0.0
+        #         )
+        #         data["R_errs"].append(R_err)
+        #         data["t_errs"].append(t_err)
+        #         data["inliers"].append(inliers)
+
 
 # --- METRIC AGGREGATION ---
 
@@ -172,14 +197,14 @@ def error_auc(errors, thresholds):
     # recall = (np.arange(len(errors)) + 1) / len(errors)
     # errors = np.r_[0., errors]
     # recall = np.r_[0., recall]
-    
+
     # aucs = {}
     # for thr in thresholds:
     #     last_index = np.searchsorted(errors, thr)
     #     y = np.r_[recall[:last_index], recall[last_index-1]]
     #     x = np.r_[errors[:last_index], thr]
     #     aucs[f"auc@{thr}"] = np.trapz(y, x=x) / thr
-    
+
     # return aucs
 
 

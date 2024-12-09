@@ -66,11 +66,11 @@ def spvs_coarse(data, coarse_scale):
     # 在网格中创建关键点并调整为图像分辨率
     grid_pt0_c = (
         create_meshgrid(h0, w0, False, device).reshape(1, h0 * w0, 2).repeat(N, 1, 1)
-    )  # [N, hw, 2]
+    ) + 0.5  # [N, hw, 2]
     grid_pt0_i = scale0 * grid_pt0_c
     grid_pt1_c = (
         create_meshgrid(h1, w1, False, device).reshape(1, h1 * w1, 2).repeat(N, 1, 1)
-    )
+    ) + 0.5  # [N, hw, 2]
     grid_pt1_i = scale1 * grid_pt1_c
 
     # mask padded region to (0, 0), so no need to manually mask conf_matrix_gt
@@ -99,8 +99,8 @@ def spvs_coarse(data, coarse_scale):
         data["K1"],
         data["K0"],
     )
-    w_pt0_c = w_pt0_i / scale1
-    w_pt1_c = w_pt1_i / scale0
+    w_pt0_c = w_pt0_i / scale1 - 0.5
+    w_pt1_c = w_pt1_i / scale0 - 0.5
 
     # 3. check if mutual nearest neighbor
     w_pt0_c_round = w_pt0_c[:, :, :].round().long()
@@ -161,7 +161,7 @@ def spvs_coarse(data, coarse_scale):
                 ),
                 mode="bilinear",
                 align_corners=False,
-            )
+            )[0, 0, :h0, :w0]
         )
         supervision_depth1.append(
             F.interpolate(
@@ -172,14 +172,10 @@ def spvs_coarse(data, coarse_scale):
                 ),
                 mode="bilinear",
                 align_corners=False,
-            )
+            )[0, 0, :h1, :w1]
         )
-    supervision_depth0 = torch.stack(supervision_depth0, dim=0)[
-        :, 0, 0, :h0, :w0
-    ]  # B, Hc, Wc
-    supervision_depth1 = torch.stack(supervision_depth1, dim=0)[
-        :, 0, 0, :h1, :w1
-    ]  # B, Hc, Wc
+    supervision_depth0 = torch.stack(supervision_depth0, dim=0)
+    supervision_depth1 = torch.stack(supervision_depth1, dim=0)
     # Flatten B, Hc, Wc -> B, Lc=Hc*Wc
     supervision_depth0 = rearrange(supervision_depth0, "b h w -> b (h w)")
     supervision_depth1 = rearrange(supervision_depth1, "b h w -> b (h w)")
@@ -444,7 +440,7 @@ def spvs_intermediate_v1(data, config):
 
 
 ##############  ↓  Fine-Level supervision  ↓  ##############
-@torch.no_grad()  # TODO: fix to support intermediate supervision
+@torch.no_grad()
 def spvs_fine_v1(data, config):
     """
     Update:
@@ -484,8 +480,9 @@ def spvs_fine_v1(data, config):
         )
 
     # Get correct mask
-    correct_mask = torch.linalg.norm(offset_f_1, ord=float("inf"), dim=1) < (
-        (coarse_scale / fine_scale) / radius
+    correct_mask = (
+        torch.linalg.norm(offset_f_1, ord=float("inf"), dim=1)
+        < ((coarse_scale / fine_scale) / 2 / radius) * 1.5
     )
 
     data.update({"correct_mask": correct_mask, "coord_offset_gt": offset_f_1})

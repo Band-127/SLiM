@@ -17,20 +17,23 @@ loguru_logger = get_rank_zero_only_logger(loguru_logger)
 
 def main():
     latest_ckpt_path = (
-        "logs/tb_logs/MegaDepth_640_v1_8_2_VMamba_T_cropped_C2F1_I6R2_DA/version_0"
+        "logs/tb_logs/MegaDepth_840_v1_8_2_VMamba_T_cropped_C2F4_I4R3_A/version_10/"
     )
-    latest_ckpt = "checkpoints/epoch=10-auc@5=0.394-auc@10=0.560-auc@20=0.695.ckpt"
+    latest_ckpt = "checkpoints/epoch=8-auc@5=0.522-auc@10=0.677-auc@20=0.792.ckpt"
     devices = "2,3,4,5,6,7"
-    ransac_thres = 0.5
-    coarse_thres = 0.5
-    intermediate_max = 10000
-    refine_iters = 3
-    image_size = 1184
+    ransac_thres = 0.2
+    ransac_times = 1
+    coarse_thres = 0.25
+    intermediate_thres = 0.1
+    coarse_max = 10000
+    intermediate_max = 15000
+    refine_iters = 8
+    image_size = 1200
 
     sys.path.append(latest_ckpt_path)
     get_cfg_defaults = importlib.import_module("config").get_cfg_defaults
 
-    torch.set_float32_matmul_precision("highest")
+    torch.set_float32_matmul_precision("high")
 
     # get configurations
     config: CN = get_cfg_defaults()
@@ -56,12 +59,13 @@ def main():
         config.TRAINER.WARMUP_STEP / config.TRAINER.SCALING
     )
 
-    # no limit for number of matching in test mode
-    config.MODEL.COARSE_MATCHING.MAX_MATCHES = 10000
     # lower the ransac pixel threshold for better performance
     config.TRAINER.RANSAC_PIXEL_THR = ransac_thres
+    config.TRAINER.RANSAC_TIMES = ransac_times
     config.MODEL.COARSE_MATCHING.THRESHOLD = coarse_thres
+    config.MODEL.INTERMEDIATE_MATCHING.THRESHOLD = intermediate_thres
     config.IMAGE_SIZE = config.MODEL.BACKBONE.INPUT_SIZE = config.DATASET.MGDPT_IMG_RESIZE = image_size
+    config.MODEL.COARSE_MATCHING.MAX_MATCHES = coarse_max
     config.MODEL.INTERMEDIATE_MATCHING.MAX_MATCHES = intermediate_max
     config.MODEL.REFINE_ITERS = refine_iters
 

@@ -22,7 +22,7 @@ class BasicBlock(nn.Module):
         self.conv2 = conv3x3(planes, planes)
         self.ln1 = nn.LayerNorm(planes)  # LayerNorm replacing BatchNorm
         self.ln2 = nn.LayerNorm(planes)  # LayerNorm replacing BatchNorm
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU()
 
         if stride == 1:
             self.downsample = None
@@ -67,7 +67,7 @@ class ResNet18_2_4_8_modified(nn.Module):
             1, initial_dim, kernel_size=7, stride=2, padding=3, bias=False
         )
         self.ln1 = nn.LayerNorm(initial_dim)  # LayerNorm replacing BatchNorm
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU()
 
         self.layer1 = self._make_layer(block, block_dims[0], stride=1)  # 1/2
         self.layer2 = self._make_layer(block, block_dims[1], stride=2)  # 1/4
@@ -125,7 +125,7 @@ class ResNet18_2_4_8_16_modified(nn.Module):
             1, initial_dim, kernel_size=7, stride=2, padding=3, bias=False
         )
         self.ln1 = nn.LayerNorm(initial_dim)  # LayerNorm replacing BatchNorm
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.ReLU()
 
         self.layer1 = self._make_layer(block, block_dims[0], stride=1)  # 1/2
         self.layer2 = self._make_layer(block, block_dims[1], stride=2)  # 1/4

@@ -76,6 +76,8 @@ class MultiScaleSinePositionalEncoding(nn.Module):
             hw_pos_emb_rescaled = F.interpolate(
                 hw_pos_emb_cropped.unsqueeze(0),
                 scale_factor=(scales[i], scales[i]),
+                mode="bilinear",
+                align_corners=True,
             ).squeeze(0)
 
             self.register_buffer(
@@ -102,7 +104,8 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
     @torch.no_grad
     def __init__(
         self,
-        d_model: int,
+        max_d_model: int,
+        d_model: Sequence[int],
         max_hw: int,
         scales: Sequence[float],
         dtype: torch.dtype = torch.float32,
@@ -110,13 +113,15 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
         """
         Default Constructor for dual input multi-scale sinusoidal positional encoding, alike 3D PE, make sure features in all scales are transform into same channel number before input.
         Args:
-            d_model (int): Typically the largest dimensions of features in all scale, e.g. for ResNet18: 512
+            max_d_model (int): Typically the largest dimensions of features in all scale, e.g. for ResNet18: 512
+            d_model (Sequence[int]): the dimensions of features in all scale, e.g. for ResNet18: [64, 128, 256, 512]
             max_hw (int): the largest length of both side of image input. MAX(maximum_height, maximum_width)
             scales (Sequence[int]): Scales of features, e.g. for ResNet18: [0.5, 0.25, 0.125, 0.0625]
             dtype (torch.dtype): Data type, must be in float type
         """
         super(DualMultiScaleSinePositionalEncoding, self).__init__()
 
+        self.max_d_model = max_d_model
         self.d_model = d_model
         self.max_hw = max_hw
         self.scales = scales
@@ -126,11 +131,17 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
         # build multi-scale position embedding map
         self.all_scales_pos_emb = []  # scale, C, H, W
 
-        pos_x = torch.arange(self.max_hw, dtype=self.dtype)
-        pos_y = torch.arange(self.max_hw, dtype=self.dtype)
-        pos_z = torch.arange(2 * self.num_scales, dtype=self.dtype)
+        # Size invariant position encoding, 1000 as the reference size
+        pos_x = torch.arange(self.max_hw, dtype=self.dtype) / self.max_hw * 1000 * np.pi
+        pos_y = torch.arange(self.max_hw, dtype=self.dtype) / self.max_hw * 1000 * np.pi
+        pos_z = (
+            torch.arange(2 * self.num_scales, dtype=self.dtype)
+            / (2 * self.num_scales)
+            * 1000
+            * np.pi
+        )
 
-        d_pos_embeddings = int(np.ceil(self.d_model / 3))
+        d_pos_embeddings = int(np.ceil(self.max_d_model / 3))
         inv_freq = 1.0 / (
             10000.0
             ** (
@@ -145,6 +156,7 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
 
         for input in range(2):
             for i in range(self.num_scales):
+                C = self.d_model[i]
                 temp_x = torch.einsum("i,j->ij", pos_x, inv_freq)
                 temp_y = torch.einsum("i,j->ij", pos_y, inv_freq)
                 temp_z = pos_z[i + input * self.num_scales] * inv_freq
@@ -164,7 +176,7 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
                 hw_pos_emb[:, :, 5::6] = cos_z
 
                 # Crop the exceeding channels
-                hw_pos_emb_cropped = hw_pos_emb[:, :, 0 : self.d_model]
+                hw_pos_emb_cropped = hw_pos_emb[:, :, 0 : self.max_d_model]
 
                 # H, W, C -> C, H, W
                 hw_pos_emb_cropped = hw_pos_emb_cropped.swapaxes(0, -1).swapaxes(-1, -2)
@@ -173,12 +185,14 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
                 hw_pos_emb_rescaled = F.interpolate(
                     hw_pos_emb_cropped.unsqueeze(0),
                     scale_factor=(scales[i], scales[i]),
+                    mode="bilinear",
+                    align_corners=True,
                 ).squeeze(0)
 
                 self.register_buffer(
                     f"all_scales_pos_emb_{i + input * self.num_scales}",
-                    hw_pos_emb_rescaled,
-                    persistent=False,
+                    hw_pos_emb_rescaled[:C],
+                    persistent=True,
                 )
 
     def forward(self, x1: Sequence[torch.Tensor], x2: Sequence[torch.Tensor]):
@@ -188,22 +202,16 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
             x1 (Sequence[torch.Tensor]): Multi-scale input 1: Scales x tensor[B x C x H x W], make sure features in all scales are transform into same channel number before input.
             x2 (Sequence[torch.Tensor]): Multi-scale input 2: Scales x tensor[B x C x H x W], make sure features in all scales are transform into same channel number before input.
         """
-        for s, single_scale in enumerate(x1):
-            batch_size = single_scale.shape[0]
-            for b in range(batch_size):
-                C = single_scale[b].shape[0]
-                single_scale[b] = (
-                    single_scale[b] + getattr(self, f"all_scales_pos_emb_{s}")[:C]
-                )
+        for s in range(len(x1)):
+            x1[s] = x1[s] + getattr(self, f"all_scales_pos_emb_{s}").repeat(
+                x1[s].shape[0], 1, 1, 1
+            )
 
-        for s, single_scale in enumerate(x2):
-            batch_size = single_scale.shape[0]
-            for b in range(batch_size):
-                C = single_scale[b].shape[0]
-                single_scale[b] = (
-                    single_scale[b]
-                    + getattr(self, f"all_scales_pos_emb_{s + self.num_scales}")[:C]
-                )
+        for s in range(len(x2)):
+            x2[s] = x2[s] + getattr(
+                self, f"all_scales_pos_emb_{s + self.num_scales}"
+            ).repeat(x2[s].shape[0], 1, 1, 1)
+
         return x1, x2
 
     def get_position_encodings(self):

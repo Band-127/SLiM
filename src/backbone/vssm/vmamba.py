@@ -1403,7 +1403,7 @@ class VSSM(nn.Module):
     def _make_patch_embed_v2(in_chans=3, embed_dim=96, patch_size=4, patch_norm=True, norm_layer=nn.LayerNorm, channel_first=False):
         # if channel first, then Norm and Output are both channel_first
         stride = patch_size // 2
-        kernel_size = stride + 1
+        kernel_size = max(stride + 1, 3)
         padding = 1
         return nn.Sequential(
             nn.Conv2d(in_chans, embed_dim // 2, kernel_size=kernel_size, stride=stride, padding=padding),

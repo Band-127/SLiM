@@ -9,7 +9,7 @@ _CN = CN()
 _CN.DEBUG = False
 _CN.OVERALL_MODE = "train"          # options: ["train", "test"]
 _CN.GLOBAL_SEED = 66                # for reproducibility, None for random
-_CN.IMAGE_SIZE = 640
+_CN.IMAGE_SIZE = 832
 _CN.DTYPE = "float32"
 _CN.PRETRAINED_PATH = None
 _CN.DUMP_DIR = "dump/maff_baseline_outdoor"
@@ -17,12 +17,13 @@ _CN.DUMP_DIR = "dump/maff_baseline_outdoor"
 ########    Device Configurations    ########
 # Support CUDA/CPU only!!!
 _CN.DEVICE = CN()
-_CN.DEVICE.ENABLE_GPU = True        # Whether enable GPUs, default true
-_CN.DEVICE.ENABLE_DDP = True        # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "2,3,4,5,6,7"          # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.ENABLE_GPU = True                    # Whether enable GPUs, default true
+_CN.DEVICE.ENABLE_DDP = True                    # Whether enable distributed data parallel, default true
+_CN.DEVICE.GPU_IDX = "0,1,2,3,4,5,6,7"          # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
+_CN.BATCH_SIZE = 1
 
 ########    Dataset Configurations    ########
 _CN.DATASET = CN()
@@ -69,46 +70,50 @@ _CN.SAMPLER.REPEAT = 1                              # how many times to be repea
 
 ########    Dataset Loader Configurations    ########
 _CN.LOADER = CN()
-_CN.LOADER.BATCH_SIZE = 1                           # how many samples per batch to load, per gpu
-_CN.LOADER.NUM_WORKERS = 4                          # how many subprocesses to use for data loading.
+_CN.LOADER.BATCH_SIZE = _CN.BATCH_SIZE              # how many samples per batch to load, per gpu
+_CN.LOADER.NUM_WORKERS = 12                         # how many subprocesses to use for data loading.
 _CN.LOADER.PIN_MEMORY = True                        # If True, the data loader will copy Tensors into device/CUDA pinned memory before returning them.
 
 ########    Trainer Configurations    ########
 _CN.TRAINER = CN()
 _CN.TRAINER.WORLD_SIZE = None                       # Will be calculated using number of nodes and exact number of devices available
-_CN.TRAINER.GRADIENT_CLIPPING = 1.0                 # Gradient clipping
+_CN.TRAINER.GRADIENT_CLIPPING = 0.5                 # Gradient clipping
 _CN.TRAINER.CANONICAL_BS = 8
-_CN.TRAINER.CANONICAL_LR = 5e-4                     # using LR finder provided by pytorch lightning
+_CN.TRAINER.CANONICAL_LR = 3e-3                     # using LR finder provided by pytorch lightning if FIND_LR set to True
 _CN.TRAINER.SCALING = None                          # this will be calculated automatically
 _CN.TRAINER.FIND_LR = False                         # use learning rate finder from pytorch-lightning, TODO: fix lr finder
 _CN.TRAINER.FIRST_STAGE_EPOCHS = 2                  # first stage epochs
+# gradient accumulation
+_CN.TRAINER.ACCUMULATE_GRAD_BATCHES = 8
 # optimizer
 _CN.TRAINER.OPTIMIZER = "AdamW"                     # options: [Adam, AdamW]
 _CN.TRAINER.TRUE_LR = None
 _CN.TRAINER.ADAM_DECAY = 0.1
-_CN.TRAINER.ADAMW_DECAY = 0.1
+_CN.TRAINER.ADAMW_DECAY = 0.01
 # learning rate scheduler
 _CN.TRAINER.SCHEDULER = "MultiStepLR"                   # options: [MultiStepLR, CosineAnnealing, ExponentialLR, CosineAnnealingWarmRestarts]
-_CN.TRAINER.SCHEDULER_INTERVAL = "epoch"                # [epoch, step]
-_CN.TRAINER.MSLR_MILESTONES = [2, 4, 8, 12]                # MSLR: MultiStepLR
-_CN.TRAINER.MSLR_GAMMA = 0.2
-_CN.TRAINER.COSA_TMAX = 30                              # COSA: CosineAnnealing
+_CN.TRAINER.SCHEDULER_INTERVAL = "epoch"                # [epoch, step], automatically switch to step mode when using CosineAnnealing & CosineAnnealingWarmRestarts
+_CN.TRAINER.MSLR_MILESTONES = [4, 8, 10, 12]            # MSLR: MultiStepLR
+_CN.TRAINER.MSLR_GAMMA = 0.1
+_CN.TRAINER.COSA_TMAX = 15                              # COSA: CosineAnnealing, Tmax, in epoch, will be converted to step automatically
+_CN.TRAINER.COSA_ETA_MIN = 1e-9                         # COSA: CosineAnnealing, eta_min
 _CN.TRAINER.ELR_GAMMA = 0.999992                        # ELR: ExponentialLR, this value for "step" interval
-_CN.TRAINER.COSAWR_T0 = 3000                            # COSAWR: CosineAnnealingWarmRestarts, T0 means the first restart step
-_CN.TRAINER.COSAWR_TMULT = 2                            # COSAWR: CosineAnnealingWarmRestarts, Tmult in CosineAnnealingWarmRestarts, check by urself
-_CN.TRAINER.COSAWR_ETAMIN = 1e-8
+_CN.TRAINER.COSAWR_T0 = 1                               # COSAWR: CosineAnnealingWarmRestarts, T0, in epoch, will be converted to step automatically
+_CN.TRAINER.COSAWR_TMULT = 2                            # COSAWR: CosineAnnealingWarmRestarts, Tmult
+_CN.TRAINER.COSAWR_ETAMIN = 1e-12
 # step-based warm-up
 _CN.TRAINER.WARMUP_TYPE = 'linear'                      # options: [linear, constant]
 _CN.TRAINER.WARMUP_RATIO = 0.01
-_CN.TRAINER.WARMUP_STEP = 3000                          # first epoch as warm up epoch
+_CN.TRAINER.WARMUP_STEP = 15000                         # in steps
 # plotting related
 _CN.TRAINER.ENABLE_PLOTTING = True
 _CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 64                    # number of val/test paris for plotting
 _CN.TRAINER.PLOT_MODE = 'evaluation'                    # ['evaluation', 'confidence']
 _CN.TRAINER.PLOT_MATCHES_ALPHA = 'dynamic'
 # For metric calculation
-_CN.TRAINER.RANSAC_PIXEL_THR = 0.5
+_CN.TRAINER.RANSAC_PIXEL_THR = 0.2
 _CN.TRAINER.RANSAC_CONF = 0.99999
+_CN.TRAINER.RANSAC_TIMES = 1
 _CN.TRAINER.EPI_ERR_THR = 5e-4 if _CN.DATASET.TRAINVAL_DATA_SOURCE == "ScanNet" else 1e-4   # recommendation: 5e-4 for ScanNet, 1e-4 for MegaDepth (from SuperGlue)
 
 ########    Logging Configurations    ########
@@ -126,10 +131,11 @@ _CN.MODEL.SHOW_GT_MATCHED_FINE = False
 _CN.MODEL.DTYPE = _CN.DTYPE
 _CN.MODEL.VERSION = "v1"                            # options: ["v1"]
 _CN.MODEL.DIMENSION = 192
-_CN.MODEL.FINE_DIMENSION = 96                       # Default: 96
-_CN.MODEL.REFINE_ITERS = 6
+_CN.MODEL.FINE_DIMENSION = 48                       # Default: 64
+_CN.MODEL.REFINE_ITERS = 4
 _CN.MODEL.REFINE_LOOKUP_RADIUS = 3
 _CN.MODEL.USING_MAMBA2 = True
+_CN.MODEL.BATCH_SIZE = _CN.BATCH_SIZE
 # will be calculated automatically based on backbone
 _CN.MODEL.COARSE_SCALE_IDX = 1
 _CN.MODEL.COARSE_SCALE = None                       
@@ -137,16 +143,17 @@ _CN.MODEL.FINE_SCALE_IDX = 0
 _CN.MODEL.FINE_SCALE = None
 # refinement
 _CN.MODEL.DISABLE_PE = True                         # Whether using pe before encoder or not
-_CN.MODEL.CONF_MASK_DEPTH_REFINEMENT = True         # Whether using depth map to refine conf mask(generate confidence mask from output feature using mlp to mask unwanted area in correlation)
+_CN.MODEL.CONF_MASK_DEPTH_REFINEMENT = False        # Whether using depth map to refine conf mask(generate confidence mask from output feature using mlp to mask unwanted area in correlation)
 
 # Feature Backbone
 _CN.MODEL.BACKBONE = CN()
 _CN.MODEL.BACKBONE.BACKBONE_TYPE = "VMamba_T_cropped"
+_CN.MODEL.BACKBONE.VMAMBA_PRETRAINED = False
 # backbone options: 
 # [
 #   "ResNet18", "ResNet18_modified", "ResNet18_pretrained",                         <-- ResNet in LoFTR, changed batchnorm into layernorm, original ResNet and pretrained weights
 #   "VMamba_T", "VMamba_S", "VMamba_B",                                             <-- means pretrained, patch size = 4, 1/2 is extracted after patch embedding with a pixel shuffle(x2)
-#   "VMamba_T_modifed", "VMamba_S_modified", "VMamba_B_modified",                   <-- means non pretrained, patch size = 2
+#   "VMamba_T_modified", "VMamba_S_modified", "VMamba_B_modified",                  <-- means non pretrained, patch size = 2
 #   "ResNet18_pretrained_FPN" , "VMamba_T_FPN", "VMamba_S_FPN", "VMamba_B_FPN",     <-- pretrained and with FPN
 #   "VMamba_T_cropped", "VMamba_S_cropped", "VMamba_B_cropped",                     <-- pretrained without last two layers, 1/2 is extracted after patch embedding with a pixel shuffle(x2)
 #   "VMamba_T_cropped_FPN"
@@ -167,38 +174,37 @@ _CN.MODEL.COARSE_ENCODER.CONV_DIM = 3
 _CN.MODEL.COARSE_ENCODER.DELTA = 16
 _CN.MODEL.COARSE_ENCODER.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
 
-# Recurrent Refinement Unit
-_CN.MODEL.RRU = CN()
-_CN.MODEL.RRU.NUM_LAYERS = 1
-_CN.MODEL.RRU.INNER_EXPANSION = 2
-_CN.MODEL.RRU.CONV_DIM = 3
-_CN.MODEL.RRU.DELTA = 16
-_CN.MODEL.RRU.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
+# Fine Encoder
+_CN.MODEL.FINE_ENCODER = CN()
+_CN.MODEL.FINE_ENCODER.NUM_LAYERS = 4
 
 # Coarse matching
 _CN.MODEL.COARSE_MATCHING = CN()
-_CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.3
-_CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 2000
+_CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.25
+_CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 5000
 
 # Intermediate matching
 _CN.MODEL.INTERMEDIATE_MATCHING = CN()
-_CN.MODEL.INTERMEDIATE_MATCHING.MAX_MATCHES = 5000
+_CN.MODEL.INTERMEDIATE_MATCHING.THRESHOLD = 0.1
+_CN.MODEL.INTERMEDIATE_MATCHING.MAX_MATCHES = 10000
 _CN.MODEL.INTERMEDIATE_MATCHING.TRAIN_NOISE_SCALE = 2.0
+
+# Refinement
+_CN.MODEL.REFINEMENT = CN()
+_CN.MODEL.REFINEMENT.GRU = True
 
 ########    Loss Configurations    ########
 _CN.LOSS = CN()
 _CN.LOSS.VERSION = _CN.MODEL.VERSION
 # COARSE MATCHING
 _CN.LOSS.COARSE_WEIGHT = 1.0
-_CN.LOSS.FOCAL_ALPHA_COARSE = 0.25
 _CN.LOSS.FOCAL_GAMMA_COARSE = 2.0
 # INTERMEDIATE MATCHING
 _CN.LOSS.INTERMEDIATE_WEIGHT = 1.0
-_CN.LOSS.FOCAL_ALPHA_INTERMEDIATE = 0.25
 _CN.LOSS.FOCAL_GAMMA_INTERMEDIATE = 2.0
 # FINE MATCHING
-_CN.LOSS.FINE_WEIGHT = 1.0
-_CN.LOSS.FINE_TYPE = 'l2'                       # options: ['l2']
+_CN.LOSS.FINE_WEIGHT = 10.0
+_CN.LOSS.FINE_TYPE = 'l2'                   # options: ['l2', 'l1', 'huber']
 _CN.LOSS.FINE_THR = 1.0
 _CN.LOSS.ITER_DECAY_GAMMA = 0.8
 # CONFIDENCE MASK REFINEMENT
@@ -217,7 +223,7 @@ if "VMamba_T" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
         _CN.MODEL.FINE_SCALE_IDX = 0
     else:
         _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
-        _CN.MODEL.BACKBONE.LAYER_DIMS = (192, 384, 768)
+        _CN.MODEL.BACKBONE.LAYER_DIMS = (48, 96, 192)
         _CN.MODEL.COARSE_SCALE_IDX = 2
         _CN.MODEL.FINE_SCALE_IDX = 0
 elif "VMamba_S" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
@@ -228,7 +234,7 @@ elif "VMamba_S" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
         _CN.MODEL.FINE_SCALE_IDX = 0
     else:
         _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
-        _CN.MODEL.BACKBONE.LAYER_DIMS = (96, 192, 384)
+        _CN.MODEL.BACKBONE.LAYER_DIMS = (48, 96, 192)
         _CN.MODEL.COARSE_SCALE_IDX = 2
         _CN.MODEL.FINE_SCALE_IDX = 0
 elif "VMamba_B" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
@@ -239,7 +245,7 @@ elif "VMamba_B" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
         _CN.MODEL.FINE_SCALE_IDX = 0
     else:
         _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
-        _CN.MODEL.BACKBONE.LAYER_DIMS = (128, 256, 512)
+        _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256)
         _CN.MODEL.COARSE_SCALE_IDX = 2
         _CN.MODEL.FINE_SCALE_IDX = 0
 elif "ResNet18_pretrained" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
@@ -279,17 +285,19 @@ if _CN.MODEL.VERSION == "v1":
                             (f"_{_CN.MODEL.COARSE_SCALE}") + \
                             (f"_{_CN.MODEL.FINE_SCALE}") + \
                             (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}") + \
-                            (f"_C{_CN.MODEL.COARSE_ENCODER.NUM_LAYERS}F{_CN.MODEL.RRU.NUM_LAYERS}") + \
+                            (f"_C{_CN.MODEL.COARSE_ENCODER.NUM_LAYERS}F{_CN.MODEL.FINE_ENCODER.NUM_LAYERS}") + \
                             (f"_I{_CN.MODEL.REFINE_ITERS}R{_CN.MODEL.REFINE_LOOKUP_RADIUS}_") + \
                             ("D" if _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT else "") + \
-                            ("A" if _CN.DATASET.AUGMENTATION_TYPE is not None else "")
+                            ("A" if _CN.DATASET.AUGMENTATION_TYPE is not None else "") + \
+                            ("nGRU" if not _CN.MODEL.REFINEMENT.GRU else "")
 
 
 def get_cfg_defaults():
     # Set the seed
     if _CN.GLOBAL_SEED is None:
-        if os.environ.get('GLOBAL_SEED'):
-            _CN.GLOBAL_SEED = int(os.environ.get('GLOBAL_SEED'))
+        seed = os.environ.get('GLOBAL_SEED')
+        if seed:
+            _CN.GLOBAL_SEED = int(seed)
         else:
             # set a random number with current time as random seed
             random.seed(a=None)

@@ -30,7 +30,9 @@ def main():
     )
     config.TRAINER.WORLD_SIZE = n_gpu_available * config.DEVICE.NUM_NODES
     config.TRAINER.TRUE_BATCH_SIZE = (
-        config.TRAINER.WORLD_SIZE * config.LOADER.BATCH_SIZE
+        config.TRAINER.WORLD_SIZE
+        * config.LOADER.BATCH_SIZE
+        * config.TRAINER.ACCUMULATE_GRAD_BATCHES
     )
     config.TRAINER.SCALING = (
         config.TRAINER.TRUE_BATCH_SIZE / config.TRAINER.CANONICAL_BS
@@ -85,6 +87,8 @@ def main():
         gradient_clip_val=config.TRAINER.GRADIENT_CLIPPING,
         sync_batchnorm=(config.TRAINER.WORLD_SIZE > 0),
         profiler=profiler,
+        accumulate_grad_batches=config.TRAINER.ACCUMULATE_GRAD_BATCHES,
+        log_every_n_steps=int(50 / config.TRAINER.ACCUMULATE_GRAD_BATCHES),
     )
     loguru_logger.info("Trainer Initialized!")
 

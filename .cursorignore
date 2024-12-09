@@ -3,4 +3,7 @@
 *.ckpt
 data/
 __pycache__/
-.*/
+.vscode/
+dump/*
+logs/tb_logs/*
+cached_data*.pkl

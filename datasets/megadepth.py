@@ -144,7 +144,6 @@ class MegaDepthDataset(Dataset):
             ),
         }
 
-        # for LoFTR training
         if mask0 is not None:  # img_padding is True
             if self.coarse_scale:
                 [ts_mask_0, ts_mask_1] = F.interpolate(

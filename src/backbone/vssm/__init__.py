@@ -2,10 +2,12 @@ import torch
 from torch import nn
 from .vmamba import VSSM
 import torch.nn.functional as F
+from src.utils.any_input_identity import AnyInputIdentity
 
 VMAMBA_T_PATH = "src/backbone/vssm/pretrained_ckpt/vssm1_tiny_0230s_ckpt_epoch_264.pth"
 VMAMBA_S_PATH = "src/backbone/vssm/pretrained_ckpt/vssm1_small_0229s_ckpt_epoch_240.pth"
 VMAMBA_B_PATH = "src/backbone/vssm/pretrained_ckpt/vssm1_base_0229s_ckpt_epoch_225.pth"
+
 
 def conv1x1(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
@@ -37,13 +39,29 @@ class VMamba_Feature_Extractor(nn.Module):
     def __init__(self, config):
         super(VMamba_Feature_Extractor, self).__init__()
         if "VMamba_T" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_T(config)
+            self.backbone = (
+                build_pretrained_VMamba_T(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_T(config)
+            )
         elif "VMamba_S" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_S(config)
+            self.backbone = (
+                build_pretrained_VMamba_S(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_S(config)
+            )
         elif "VMamba_B" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_B(config)
+            self.backbone = (
+                build_pretrained_VMamba_B(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_B(config)
+            )
         else:  # Default to Tiny
-            self.backbone = build_pretrained_VMamba_T(config)
+            self.backbone = (
+                build_pretrained_VMamba_T(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_T(config)
+            )
 
         # remove classifier
         del self.backbone.classifier
@@ -95,8 +113,8 @@ class VMamba_Feature_Extractor_modified(nn.Module):
             self.backbone = build_modified_VMamba_T(config)
 
         # remove classifier and last layer
-        del self.backbone.classifier
         self.backbone.layers.pop(-1)
+        del self.backbone.classifier
 
     def forward(self, x):
         features = []
@@ -112,8 +130,7 @@ class VMamba_Feature_Extractor_modified(nn.Module):
             x = x + pos_embed
         # forward
         for layer in self.backbone.layers:
-            x = layer.blocks(x)
-            x = layer.downsample(x)
+            x = layer(x)
             features.append(x)
 
         return features
@@ -126,14 +143,29 @@ class VMamba_Feature_Extractor_with_FPN(nn.Module):
     def __init__(self, config):
         super(VMamba_Feature_Extractor_with_FPN, self).__init__()
         if "VMamba_T" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_T(config)
+            self.backbone = (
+                build_pretrained_VMamba_T(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_T(config)
+            )
         elif "VMamba_S" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_S(config)
+            self.backbone = (
+                build_pretrained_VMamba_S(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_S(config)
+            )
         elif "VMamba_B" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_B(config)
+            self.backbone = (
+                build_pretrained_VMamba_B(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_B(config)
+            )
         else:  # Default to Tiny
-            self.backbone = build_pretrained_VMamba_T(config)
-
+            self.backbone = (
+                build_pretrained_VMamba_T(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_T(config)
+            )
         # remove classifier
         del self.backbone.classifier
 
@@ -147,22 +179,22 @@ class VMamba_Feature_Extractor_with_FPN(nn.Module):
 
         # FPN
         self.fpn_in_channels = [int(self.backbone.dims[0] // 4), *self.backbone.dims]
-        self.fpn_out_channels = config["FPN_OUT_CHANNELS"]
-        self.fpn_layers = nn.ModuleList(
+        self.final_outconv = conv1x1(self.fpn_in_channels[-1], self.fpn_in_channels[-1])
+        self.lateral_convs = nn.ModuleList(
             [
-                conv1x1(in_channels, self.fpn_out_channels)
-                for in_channels in self.fpn_in_channels
+                conv1x1(in_channels, self.fpn_in_channels[i + 1])
+                for i, in_channels in enumerate(self.fpn_in_channels[:-1])
             ]
         )
-        self.fpn_fuse = nn.ModuleList(
+        self.output_convs = nn.ModuleList(
             [
                 nn.Sequential(
-                    conv3x3(self.fpn_out_channels, self.fpn_out_channels),
-                    LayerNorm2d(self.fpn_out_channels),
-                    nn.LeakyReLU(),
-                    conv3x3(self.fpn_out_channels, self.fpn_out_channels),
+                    conv3x3(self.fpn_in_channels[i + 1], self.fpn_in_channels[i + 1]),
+                    LayerNorm2d(self.fpn_in_channels[i + 1]),
+                    nn.GELU(),
+                    conv3x3(self.fpn_in_channels[i + 1], self.fpn_in_channels[i]),
                 )
-                for _ in range(len(self.fpn_in_channels) - 1)
+                for i in range(len(self.fpn_in_channels) - 1)
             ]
         )
 
@@ -187,15 +219,15 @@ class VMamba_Feature_Extractor_with_FPN(nn.Module):
             x = layer.downsample(x)
 
         # FPN
-        fpn_features = [
-            self.fpn_layers[-1](features[-1])
-        ]  # smallest scale feature no need to fuse with other scales
+        prev_features = self.final_outconv(features[-1])
+        fpn_features = [prev_features]
+
         for i in range(len(features) - 2, -1, -1):
             higher_feature = F.interpolate(
                 fpn_features[0], scale_factor=2, mode="bilinear", align_corners=True
             )
-            current_feature = self.fpn_layers[i](features[i])
-            fused_feature = self.fpn_fuse[i - 1](higher_feature + current_feature)
+            current_feature = self.lateral_convs[i](features[i])
+            fused_feature = self.output_convs[i](higher_feature + current_feature)
             fpn_features.insert(0, fused_feature)
 
         return fpn_features
@@ -208,13 +240,29 @@ class VMamba_Feature_Extractor_cropped(nn.Module):
     def __init__(self, config):
         super(VMamba_Feature_Extractor_cropped, self).__init__()
         if "VMamba_T" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_T(config)
+            self.backbone = (
+                build_pretrained_VMamba_T(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_T(config)
+            )
         elif "VMamba_S" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_S(config)
+            self.backbone = (
+                build_pretrained_VMamba_S(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_S(config)
+            )
         elif "VMamba_B" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_B(config)
+            self.backbone = (
+                build_pretrained_VMamba_B(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_B(config)
+            )
         else:  # Default to Tiny
-            self.backbone = build_pretrained_VMamba_T(config)
+            self.backbone = (
+                build_pretrained_VMamba_T(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_T(config)
+            )
 
         # remove classifier and last two layer
         del self.backbone.classifier
@@ -234,7 +282,6 @@ class VMamba_Feature_Extractor_cropped(nn.Module):
         # patch embed
         x = self.conv1to3(x)
         x = self.backbone.patch_embed(x)
-        features.append(self.pixel_shuffle(x))
         # pos embed
         if self.backbone.pos_embed is not None:
             pos_embed = (
@@ -243,6 +290,7 @@ class VMamba_Feature_Extractor_cropped(nn.Module):
                 else self.backbone.pos_embed
             )
             x = x + pos_embed
+        features.append(self.pixel_shuffle(x))
         # forward
         for layer in self.backbone.layers:
             x = layer.blocks(x)
@@ -259,13 +307,29 @@ class VMamba_Feature_Extractor_cropped_FPN(nn.Module):
     def __init__(self, config):
         super(VMamba_Feature_Extractor_cropped_FPN, self).__init__()
         if "VMamba_T" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_T(config)
+            self.backbone = (
+                build_pretrained_VMamba_T(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_T(config)
+            )
         elif "VMamba_S" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_S(config)
+            self.backbone = (
+                build_pretrained_VMamba_S(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_S(config)
+            )
         elif "VMamba_B" in config["BACKBONE_TYPE"]:
-            self.backbone = build_pretrained_VMamba_B(config)
+            self.backbone = (
+                build_pretrained_VMamba_B(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_B(config)
+            )
         else:  # Default to Tiny
-            self.backbone = build_pretrained_VMamba_T(config)
+            self.backbone = (
+                build_pretrained_VMamba_T(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_T(config)
+            )
 
         # remove classifier and last two layer
         del self.backbone.classifier
@@ -284,22 +348,22 @@ class VMamba_Feature_Extractor_cropped_FPN(nn.Module):
 
         # FPN
         self.fpn_in_channels = [int(self.backbone.dims[0] // 4), *self.backbone.dims]
-        self.fpn_out_channels = config["FPN_OUT_CHANNELS"]
-        self.fpn_layers = nn.ModuleList(
+        self.final_outconv = conv1x1(self.fpn_in_channels[-1], self.fpn_in_channels[-1])
+        self.lateral_convs = nn.ModuleList(
             [
-                conv1x1(in_channels, self.fpn_out_channels)
-                for in_channels in self.fpn_in_channels
+                conv1x1(in_channels, self.fpn_in_channels[i + 1])
+                for i, in_channels in enumerate(self.fpn_in_channels[:-1])
             ]
         )
-        self.fpn_fuse = nn.ModuleList(
+        self.output_convs = nn.ModuleList(
             [
                 nn.Sequential(
-                    conv3x3(self.fpn_out_channels, self.fpn_out_channels),
-                    LayerNorm2d(self.fpn_out_channels),
-                    nn.LeakyReLU(),
-                    conv3x3(self.fpn_out_channels, self.fpn_out_channels),
+                    conv3x3(self.fpn_in_channels[i + 1], self.fpn_in_channels[i + 1]),
+                    LayerNorm2d(self.fpn_in_channels[i + 1]),
+                    nn.GELU(),
+                    conv3x3(self.fpn_in_channels[i + 1], self.fpn_in_channels[i]),
                 )
-                for _ in range(len(self.fpn_in_channels) - 1)
+                for i in range(len(self.fpn_in_channels) - 1)
             ]
         )
 
@@ -324,15 +388,15 @@ class VMamba_Feature_Extractor_cropped_FPN(nn.Module):
             x = layer.downsample(x)
 
         # FPN
-        fpn_features = [
-            self.fpn_layers[-1](features[-1])
-        ]  # smallest scale feature no need to fuse with other scales
+        prev_features = self.final_outconv(features[-1])
+        fpn_features = [prev_features]
+
         for i in range(len(features) - 2, -1, -1):
             higher_feature = F.interpolate(
-                fpn_features[0], scale_factor=2, mode="bilinear", align_corners=False
+                fpn_features[0], scale_factor=2, mode="bilinear", align_corners=True
             )
-            current_feature = self.fpn_layers[i](features[i])
-            fused_feature = self.fpn_fuse[i - 1](higher_feature + current_feature)
+            current_feature = self.lateral_convs[i](features[i])
+            fused_feature = self.output_convs[i](higher_feature + current_feature)
             fpn_features.insert(0, fused_feature)
 
         return fpn_features
@@ -341,7 +405,7 @@ class VMamba_Feature_Extractor_cropped_FPN(nn.Module):
         return self.backbone.flops(shape, verbose)
 
 
-def build_pretrained_VMamba_T(config):
+def build_VMamba_T(config):
     model = VSSM(
         depths=[2, 2, 8, 2],
         dims=96,
@@ -370,20 +434,55 @@ def build_pretrained_VMamba_T(config):
         posembed=False,
         imgsize=config["INPUT_SIZE"],
     )
-    state_dict = torch.load(
-        VMAMBA_T_PATH
-    )["model"]
+    return model
+
+
+def build_pretrained_VMamba_T(config):
+    model = build_VMamba_T(config)
+    state_dict = torch.load(VMAMBA_T_PATH)["model"]
     model.load_state_dict(state_dict)
     return model
 
 
 def build_modified_VMamba_T(config):
     model = VSSM(
-        depths=[2, 2, 8, 2],
-        dims=96,
+        depths=[1, 2, 2, 1],
+        dims=24,
         drop_path_rate=0.2,
         patch_size=2,
         in_chans=1,
+        num_classes=1000,
+        ssm_d_state=1,
+        ssm_ratio=1.0,
+        ssm_dt_rank="auto",
+        ssm_act_layer="silu",
+        ssm_conv=3,
+        ssm_conv_bias=False,
+        ssm_drop_rate=0.0,
+        ssm_init="v0",
+        forward_type="v05_noz",
+        mlp_ratio=4.0,
+        mlp_act_layer="gelu",
+        mlp_drop_rate=0.0,
+        gmlp=False,
+        patch_norm=True,
+        norm_layer="ln2d",
+        downsample_version="v3",
+        patchembed_version="v2",
+        use_checkpoint=False,
+        posembed=False,
+        imgsize=config["INPUT_SIZE"],
+    )
+    return model
+
+
+def build_VMamba_S(config):
+    model = VSSM(
+        depths=[2, 2, 20, 2],
+        dims=96,
+        drop_path_rate=0.3,
+        patch_size=4,
+        in_chans=3,
         num_classes=1000,
         ssm_d_state=1,
         ssm_ratio=1.0,
@@ -410,45 +509,16 @@ def build_modified_VMamba_T(config):
 
 
 def build_pretrained_VMamba_S(config):
-    model = VSSM(
-        depths=[2, 2, 20, 2],
-        dims=96,
-        drop_path_rate=0.3,
-        patch_size=4,
-        in_chans=3,
-        num_classes=1000,
-        ssm_d_state=1,
-        ssm_ratio=1.0,
-        ssm_dt_rank="auto",
-        ssm_act_layer="silu",
-        ssm_conv=3,
-        ssm_conv_bias=False,
-        ssm_drop_rate=0.0,
-        ssm_init="v0",
-        forward_type="v05_noz",
-        mlp_ratio=4.0,
-        mlp_act_layer="gelu",
-        mlp_drop_rate=0.0,
-        gmlp=False,
-        patch_norm=True,
-        norm_layer="ln2d",
-        downsample_version="v3",
-        patchembed_version="v2",
-        use_checkpoint=False,
-        posembed=False,
-        imgsize=config["INPUT_SIZE"],
-    )
-    state_dict = torch.load(
-        VMAMBA_S_PATH
-    )["model"]
+    model = build_VMamba_S(config)
+    state_dict = torch.load(VMAMBA_S_PATH)["model"]
     model.load_state_dict(state_dict)
     return model
 
 
 def build_modified_VMamba_S(config):
     model = VSSM(
-        depths=[2, 2, 20, 2],
-        dims=96,
+        depths=[2, 2, 2, 1],
+        dims=24,
         drop_path_rate=0.3,
         patch_size=2,
         in_chans=1,
@@ -477,7 +547,7 @@ def build_modified_VMamba_S(config):
     return model
 
 
-def build_pretrained_VMamba_B(config):
+def build_VMamba_B(config):
     model = VSSM(
         depths=[2, 2, 20, 2],
         dims=128,
@@ -506,17 +576,20 @@ def build_pretrained_VMamba_B(config):
         posembed=False,
         imgsize=config["INPUT_SIZE"],
     )
-    state_dict = torch.load(
-        VMAMBA_B_PATH
-    )["model"]
+    return model
+
+
+def build_pretrained_VMamba_B(config):
+    model = build_VMamba_B(config)
+    state_dict = torch.load(VMAMBA_B_PATH)["model"]
     model.load_state_dict(state_dict)
     return model
 
 
 def build_modified_VMamba_B(config):
     model = VSSM(
-        depths=[2, 2, 20, 2],
-        dims=128,
+        depths=[2, 2, 2, 1],
+        dims=32,
         drop_path_rate=0.5,
         patch_size=2,
         in_chans=1,

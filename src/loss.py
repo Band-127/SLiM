@@ -19,10 +19,14 @@ class RCRM_Loss(nn.Module):
         self.fine_weight = self.config["FINE_WEIGHT"]
         self.iter_decay_gamma = self.config["ITER_DECAY_GAMMA"]
         self.version = self.config["VERSION"]
-        self.coarse_alpha = self.config["FOCAL_ALPHA_COARSE"]
         self.coarse_gamma = self.config["FOCAL_GAMMA_COARSE"]
-        self.intermediate_alpha = self.config["FOCAL_ALPHA_INTERMEDIATE"]
         self.intermediate_gamma = self.config["FOCAL_GAMMA_INTERMEDIATE"]
+        self.fine_type = self.config["FINE_TYPE"]
+        self.fine_loss_func = {
+            "l2": self._compute_fine_loss_l2,
+            "l1": self._compute_fine_loss_l1,
+            "huber": self._compute_fine_loss_huber,
+        }[self.fine_type]
 
     def compute_coarse_loss(self, data):
         conf = data["conf_matrix"]
@@ -39,14 +43,11 @@ class RCRM_Loss(nn.Module):
 
         # 1. Compute loss for similarity matrix in coarse matching
         # Focal Loss
-        alpha = self.coarse_alpha
         gamma = self.coarse_gamma
 
         pos_conf = conf[pos_mask]
         loss = (
-            -alpha
-            * torch.pow(1 - pos_conf, gamma)
-            * torch.clamp_min(pos_conf, 1e-6).log()
+            -1 * torch.pow(1 - pos_conf, gamma) * torch.clamp_min(pos_conf, 1e-6).log()
         )
 
         # handle loss weights
@@ -67,13 +68,10 @@ class RCRM_Loss(nn.Module):
         conf_matrix_f = data["conf_matrix_f"]
         conf_matrix_f_gt = data["conf_matrix_f_gt"]
         pos_mask = conf_matrix_f_gt == 1
-        alpha = self.intermediate_alpha
         gamma = self.intermediate_gamma
         pos_conf = conf_matrix_f[pos_mask]
         loss_f1 = (
-            -alpha
-            * torch.pow(1 - pos_conf, gamma)
-            * torch.clamp_min(pos_conf, 1e-6).log()
+            -1 * torch.pow(1 - pos_conf, gamma) * torch.clamp_min(pos_conf, 1e-6).log()
         ).mean()
 
         # 2. Compute L2 loss for offset prediction in fine matching
@@ -89,15 +87,27 @@ class RCRM_Loss(nn.Module):
             loss_f2 = torch.tensor(0.0, device=offset.device)
             iters = offset.shape[0]
             total_offset = torch.zeros_like(offset[0])
+
             for i in range(iters):
                 loss_f2 += self.iter_decay_gamma ** (
                     iters - i - 1
-                ) * self._compute_fine_loss_l2(
+                ) * self.fine_loss_func(
                     offset[i] + total_offset, offset_gt, correct_mask
                 )
                 with torch.no_grad():
                     total_offset += offset[i].detach()
-        return loss_f1, loss_f2
+
+        # 3. Compute reg loss for similarity matrix in fine matching
+        spatial_expectation_f = data["spatial_expectation_f"]
+        if not correct_mask.any():
+            loss_f3 = None
+        else:
+            loss_f3 = torch.tensor(0.0, device=offset.device)
+            loss_f3 += self.fine_loss_func(
+                spatial_expectation_f, offset_gt, correct_mask
+            )
+        return loss_f1, loss_f2, loss_f3
+        # return loss_f1, loss_f2
 
     def _compute_fine_loss_l2(self, coord_offset_f, coord_offset_f_gt, correct_mask):
         """
@@ -111,6 +121,24 @@ class RCRM_Loss(nn.Module):
             (coord_offset_f_gt[correct_mask] - coord_offset_f[correct_mask]) ** 2
         ).sum(-1)
         return offset_l2.mean()
+
+    def _compute_fine_loss_l1(self, coord_offset_f, coord_offset_f_gt, correct_mask):
+        offset_l1 = (
+            (coord_offset_f_gt[correct_mask] - coord_offset_f[correct_mask]).abs()
+        ).sum(-1)
+        return offset_l1.mean()
+
+    def _compute_fine_loss_huber(self, coord_offset_f, coord_offset_f_gt, correct_mask):
+        offset_smooth_l1 = (
+            F.huber_loss(
+                coord_offset_f[correct_mask],
+                coord_offset_f_gt[correct_mask],
+                reduction="mean",
+                delta=0.1,
+            )
+            * 2
+        )
+        return offset_smooth_l1
 
     def _compute_conf_loss(self, data):
         """
@@ -168,7 +196,8 @@ class RCRM_Loss(nn.Module):
             loss_scalars.update({"loss_c": torch.tensor(0.0).clone().detach().cpu()})
 
         # 2. Fine-level loss
-        loss_f1, loss_f2 = self.compute_fine_loss_v1(data=data)
+        loss_f1, loss_f2, loss_f3 = self.compute_fine_loss_v1(data=data)
+        # loss_f1, loss_f2 = self.compute_fine_loss_v1(data=data)
         if loss_f1 is not None and loss_f1.item() != torch.nan:
             loss += loss_f1 * self.intermediate_weight
             loss_scalars.update({"loss_f1": loss_f1.clone().detach().cpu()})
@@ -179,6 +208,11 @@ class RCRM_Loss(nn.Module):
             loss_scalars.update({"loss_f2": loss_f2.clone().detach().cpu()})
         else:
             loss_scalars.update({"loss_f2": torch.tensor(0.0).clone().detach().cpu()})
+        if loss_f3 is not None and loss_f3.item() != torch.nan:
+            loss += loss_f3 * self.intermediate_weight
+            loss_scalars.update({"loss_f3": loss_f3.clone().detach().cpu()})
+        else:
+            loss_scalars.update({"loss_f3": torch.tensor(0.0).clone().detach().cpu()})
 
         # 3. Total loss
         data.update({"loss": loss, "loss_scalars": loss_scalars})

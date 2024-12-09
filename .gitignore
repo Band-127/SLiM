@@ -2,7 +2,9 @@
 *.ckpt
 data/
 __pycache__/
-.*/
+.vscode/
 dump/*
 logs/tb_logs/*
-test.jpg
+cached_data*.pkl
+*.ipynb
+.cursorignore
