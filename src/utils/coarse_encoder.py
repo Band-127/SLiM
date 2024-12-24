@@ -2,12 +2,12 @@ import torch
 from torch import nn
 from typing import Tuple
 from collections import OrderedDict
+from timm.models.layers import trunc_normal_, DropPath
 
-from timm.models.layers import trunc_normal_
 from src.backbone.vssm.vmamba import VSSBlock
 from src.backbone.vssm.vmamba import LayerNorm2d
 from src.mamba.MambaEncoder import MambaEncoderLayer
-from src.utils.inception_like_cnn import InceptionLikeCNN
+from src.utils.inception_like_cnn import InceptionNeXt
 
 
 class CoarseEncoder(nn.Module):
@@ -23,6 +23,7 @@ class CoarseEncoder(nn.Module):
         conv_dim: int,
         delta: int,
         using_mamba2: bool,
+        drop_rate: float,
     ) -> None:
         super(CoarseEncoder, self).__init__()
 
@@ -35,48 +36,12 @@ class CoarseEncoder(nn.Module):
 
         self.convs = nn.ModuleList(
             [
-                nn.Sequential(
-                    LayerNorm2d(in_output_dim),
-                    nn.Conv2d(
-                        in_channels=in_output_dim,
-                        out_channels=int(in_output_dim // 4),
-                        kernel_size=1,
-                        padding=0,
-                    ),
-                    LayerNorm2d(int(in_output_dim // 4)),
-                    nn.ReLU(),
-                    nn.Conv2d(
-                        in_channels=int(in_output_dim // 4),
-                        out_channels=int(in_output_dim // 4),
-                        kernel_size=(9, 1),
-                        padding=(4, 0),
-                    ),
-                    LayerNorm2d(int(in_output_dim // 4)),
-                    nn.ReLU(),
-                    nn.Conv2d(
-                        in_channels=int(in_output_dim // 4),
-                        out_channels=int(in_output_dim // 4),
-                        kernel_size=(1, 9),
-                        padding=(0, 4),
-                    ),
-                    LayerNorm2d(int(in_output_dim // 4)),
-                    nn.ReLU(),
-                    nn.Conv2d(
-                        in_channels=int(in_output_dim // 4),
-                        out_channels=in_output_dim,
-                        kernel_size=1,
-                        padding=0,
-                    ),
+                InceptionNeXt(
+                    in_output_dim=self.in_output_dim, kernel_size=7, split_ratio=8
                 )
                 for _ in range(num_layers)
             ]
         )
-        # self.convs = nn.ModuleList(
-        #     [
-        #         InceptionLikeCNN(in_output_dim=self.in_output_dim, kernel_size=7)
-        #         for _ in range(num_layers)
-        #     ]
-        # )
         self.mambas = nn.ModuleList(
             [
                 MambaEncoderLayer(
@@ -90,25 +55,27 @@ class CoarseEncoder(nn.Module):
             ]
         )
 
+        self.drop_path = DropPath(drop_rate) if drop_rate > 0.0 else nn.Identity()
+
         # Initialize weights
         with torch.no_grad():
+            for m in self.convs.modules():
+                if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                    trunc_normal_(m.weight, std=0.02)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
             for m in self.modules():
                 if isinstance(m, nn.LayerNorm):
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
-            for m in self.convs.modules():
-                if isinstance(m, nn.Conv2d):
-                    nn.init.kaiming_normal_(
-                        m.weight, mode="fan_out", nonlinearity="relu"
-                    )
 
     @torch.no_grad()
-    def initial_forward(self):
+    def initial_forward(self, size: int, batch_size: int):
         for i in range(5):
-            random_data_0 = torch.randn(1, self.in_output_dim, 100, 100).to(
+            random_data_0 = torch.randn(batch_size, self.in_output_dim, size, size).to(
                 self.mambas[0].mamba.mamba_forward.mamba_layer.in_proj.weight.device
             )
-            random_data_1 = torch.randn(1, self.in_output_dim, 100, 100).to(
+            random_data_1 = torch.randn(batch_size, self.in_output_dim, size, size).to(
                 self.mambas[0].mamba.mamba_forward.mamba_layer.in_proj.weight.device
             )
             _ = self.forward(random_data_0, random_data_1)
@@ -127,13 +94,13 @@ class CoarseEncoder(nn.Module):
         """
         for idx in range(self.num_layers):
             # 1. Input conv + skip
-            x0 = self.convs[idx](x0) + x0
-            x1 = self.convs[idx](x1) + x1
+            x0 = self.drop_path(self.convs[idx](x0)) + x0
+            x1 = self.drop_path(self.convs[idx](x1)) + x1
 
             # 2. Mamba + skip
             _x0, _x1 = self.mambas[idx](x0, x1)
-            x0 = _x0 + x0
-            x1 = _x1 + x1
+            x0 = self.drop_path(_x0) + x0
+            x1 = self.drop_path(_x1) + x1
         return x0, x1
 
 

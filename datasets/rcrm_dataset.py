@@ -8,8 +8,8 @@ from torch.utils.data import (
     SequentialSampler,
 )
 import pytorch_lightning as pl
-
 from datasets.megadepth import MegaDepthDataset
+from datasets.scannet import ScanNetDataset
 from datasets.sampler import RandomConcatSampler
 from utils.augment import get_augmentor_builder
 
@@ -22,15 +22,18 @@ class RCRM_Dataset(pl.LightningDataModule):
         self.mode = config.OVERALL_MODE
         self.seed = config.GLOBAL_SEED
         self.device_enable_ddp = config.DEVICE.ENABLE_DDP
+        self.parallel_workers_num = config.DATASET.PARALLEL_WORKERS_NUM
         ## train and val
         if self.mode == "train":
             self.data_source = config.DATASET.TRAINVAL_DATA_SOURCE
             self.train_data_root = config.DATASET.TRAIN_DATA_ROOT
             self.train_npz_dir = config.DATASET.TRAIN_NPZ_ROOT
             self.train_list_path = config.DATASET.TRAIN_LIST_PATH
+            self.train_intrinsic_path = config.DATASET.TRAIN_INTRINSIC_PATH
             self.val_data_root = config.DATASET.VAL_DATA_ROOT
             self.val_npz_dir = config.DATASET.VAL_NPZ_ROOT
             self.val_list_path = config.DATASET.VAL_LIST_PATH
+            self.val_intrinsic_path = config.DATASET.VAL_INTRINSIC_PATH
             self.min_overlap_score = config.DATASET.MIN_OVERLAP_SCORE_TRAIN
         ## test
         else:
@@ -38,6 +41,7 @@ class RCRM_Dataset(pl.LightningDataModule):
             self.test_data_root = config.DATASET.TEST_DATA_ROOT
             self.test_npz_dir = config.DATASET.TEST_NPZ_ROOT
             self.test_list_path = config.DATASET.TEST_LIST_PATH
+            self.test_intrinsic_path = config.DATASET.TEST_INTRINSIC_PATH
             self.min_overlap_score = config.DATASET.MIN_OVERLAP_SCORE_TEST
         ## Other vars
         self.sampler_n_samples_per_subset = config.SAMPLER.N_SAMPLES_PER_SUBSET
@@ -110,6 +114,18 @@ class RCRM_Dataset(pl.LightningDataModule):
                             augmentor_builder=self.augmentor_builder,
                         )
                     )
+                ## ScanNet
+                elif self.data_source.lower() == "scannet":
+                    datasets.append(
+                        ScanNetDataset(
+                            root_dir=self.train_data_root,
+                            npz_path=npz_path,
+                            intrinsic_path=self.train_intrinsic_path,
+                            mode="train",
+                            min_overlap_score=self.min_overlap_score,
+                            augmentor_builder=self.augmentor_builder,
+                        )
+                    )
             self.train_dataset = ConcatDataset(datasets)
             ## val
             datasets = []
@@ -130,6 +146,17 @@ class RCRM_Dataset(pl.LightningDataModule):
                             img_padding=self.megadepth_image_padding,
                             depth_padding=self.megadepth_depth_padding,
                             coarse_scale=self.megadepth_coarse_scale,
+                        )
+                    )
+                ## ScanNet
+                elif self.data_source.lower() == "scannet":
+                    datasets.append(
+                        ScanNetDataset(
+                            root_dir=self.val_data_root,
+                            npz_path=npz_path,
+                            intrinsic_path=self.val_intrinsic_path,
+                            mode="val",
+                            min_overlap_score=self.min_overlap_score,
                         )
                     )
             self.val_dataset = ConcatDataset(datasets)
@@ -153,6 +180,17 @@ class RCRM_Dataset(pl.LightningDataModule):
                             img_padding=self.megadepth_image_padding,
                             depth_padding=self.megadepth_depth_padding,
                             coarse_scale=self.megadepth_coarse_scale,
+                        )
+                    )
+                ## ScanNet
+                elif self.data_source.lower() == "scannet":
+                    datasets.append(
+                        ScanNetDataset(
+                            root_dir=self.test_data_root,
+                            npz_path=npz_path,
+                            intrinsic_path=self.test_intrinsic_path,
+                            mode=self.mode,
+                            min_overlap_score=self.min_overlap_score,
                         )
                     )
             self.test_dataset = ConcatDataset(datasets)

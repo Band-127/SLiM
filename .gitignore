@@ -5,6 +5,6 @@ __pycache__/
 .vscode/
 dump/*
 logs/tb_logs/*
-cached_data*.pkl
+cached*.pkl
 *.ipynb
 .cursorignore

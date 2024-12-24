@@ -368,6 +368,7 @@ class MambaEncoderLayer(nn.Module):
 
         x0_shape = x0.shape[2:]  # H, W
         x1_shape = x1.shape[2:]  # H, W
+
         # 2. Layer norm
         x0 = self.layer_norm(x0)
         x1 = self.layer_norm(x1)
@@ -392,19 +393,18 @@ class MambaEncoderLayer(nn.Module):
         # x1_hw = rearrange(x1_hw, "b (h w) c -> b c h w", h=x1_shape[0], w=x1_shape[1])
         # x0_wh = rearrange(x0_wh, "b (w h) c -> b c h w", h=x0_shape[0], w=x0_shape[1])
         # x1_wh = rearrange(x1_wh, "b (w h) c -> b c h w", h=x1_shape[0], w=x1_shape[1])
-        x0_hw = x0_hw.view(x0_hw.size(0), x0_shape[0], x0_shape[1], -1).permute(
+        x0_hw = x0_hw.view(x0_hw.shape[0], x0_shape[0], x0_shape[1], -1).permute(
             0, 3, 1, 2
         )
-        x1_hw = x1_hw.view(x1_hw.size(0), x1_shape[0], x1_shape[1], -1).permute(
+        x1_hw = x1_hw.view(x1_hw.shape[0], x1_shape[0], x1_shape[1], -1).permute(
             0, 3, 1, 2
         )
-        x0_wh = x0_wh.view(x0_wh.size(0), x0_shape[1], x0_shape[0], -1).permute(
+        x0_wh = x0_wh.view(x0_wh.shape[0], x0_shape[1], x0_shape[0], -1).permute(
             0, 3, 2, 1
         )
-        x1_wh = x1_wh.view(x1_wh.size(0), x1_shape[1], x1_shape[0], -1).permute(
+        x1_wh = x1_wh.view(x1_wh.shape[0], x1_shape[1], x1_shape[0], -1).permute(
             0, 3, 2, 1
         )
-
         x0 = x0_hw + x0_wh
         x1 = x1_hw + x1_wh
 

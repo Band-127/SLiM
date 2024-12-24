@@ -9,7 +9,7 @@ _CN = CN()
 _CN.DEBUG = False
 _CN.OVERALL_MODE = "train"          # options: ["train", "test"]
 _CN.GLOBAL_SEED = 66                # for reproducibility, None for random
-_CN.IMAGE_SIZE = 832
+_CN.IMAGE_SIZE = 960
 _CN.DTYPE = "float32"
 _CN.PRETRAINED_PATH = None
 _CN.DUMP_DIR = "dump/maff_baseline_outdoor"
@@ -19,7 +19,7 @@ _CN.DUMP_DIR = "dump/maff_baseline_outdoor"
 _CN.DEVICE = CN()
 _CN.DEVICE.ENABLE_GPU = True                    # Whether enable GPUs, default true
 _CN.DEVICE.ENABLE_DDP = True                    # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "0,1,2,3,4,5,6,7"          # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.GPU_IDX = "2,3,4,5,6,7"          # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
@@ -27,6 +27,10 @@ _CN.BATCH_SIZE = 1
 
 ########    Dataset Configurations    ########
 _CN.DATASET = CN()
+
+"""
+    MegaDepth
+"""
 # training
 _CN.DATASET.TRAINVAL_DATA_SOURCE = "MegaDepth"                                                              # options: ["ScanNet", "MegaDepth"]
 _CN.DATASET.TRAIN_DATA_BASE_PATH = "data/megadepth"
@@ -50,7 +54,36 @@ _CN.DATASET.TEST_POSE_ROOT = None                                               
 _CN.DATASET.TEST_NPZ_ROOT = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/index/scene_info_val_1500"
 _CN.DATASET.TEST_LIST_PATH = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/index/trainvaltest_list/val_list.txt"      # None if test data from all scenes are bundled into a single npz file
 _CN.DATASET.TEST_INTRINSIC_PATH = None
+
+"""
+    ScanNet
+"""
+# # training
+# _CN.DATASET.TRAINVAL_DATA_SOURCE = "ScanNet"                                                                # options: ["ScanNet", "MegaDepth"]
+# _CN.DATASET.TRAIN_DATA_BASE_PATH = "data/scannet"
+# _CN.DATASET.TRAIN_DATA_ROOT = f"{_CN.DATASET.TRAIN_DATA_BASE_PATH}/train"
+# _CN.DATASET.TRAIN_POSE_ROOT = None                                                                          # (optional directory for poses)
+# _CN.DATASET.TRAIN_NPZ_ROOT = f"{_CN.DATASET.TRAIN_DATA_BASE_PATH}/index/scene_data/train"                   # None if val data from all scenes are bundled into a single npz file
+# _CN.DATASET.TRAIN_LIST_PATH = f"{_CN.DATASET.TRAIN_DATA_BASE_PATH}/index/scene_data/train_list/scannet_all.txt"
+# _CN.DATASET.TRAIN_INTRINSIC_PATH = f"{_CN.DATASET.TRAIN_DATA_BASE_PATH}/index/intrinsics.npz"
+# # validating
+# _CN.DATASET.VAL_DATA_BASE_PATH = "data/scannet"
+# _CN.DATASET.VAL_DATA_ROOT = f"{_CN.DATASET.VAL_DATA_BASE_PATH}/test"
+# _CN.DATASET.VAL_POSE_ROOT = None                                                                            # (optional directory for poses)
+# _CN.DATASET.VAL_NPZ_ROOT = f"{_CN.DATASET.VAL_DATA_BASE_PATH}/index/scene_data/val_list"
+# _CN.DATASET.VAL_LIST_PATH = f"{_CN.DATASET.VAL_DATA_BASE_PATH}/index/scene_data/val_list/scannet_test.txt"  # None if val data from all scenes are bundled into a single npz file
+# _CN.DATASET.VAL_INTRINSIC_PATH = f"{_CN.DATASET.VAL_DATA_BASE_PATH}/index/scene_data/val_list/intrinsics.npz"
+# # testing
+# _CN.DATASET.TEST_DATA_SOURCE = "ScanNet"                                                                    # options: ["ScanNet", "MegaDepth"]
+# _CN.DATASET.TEST_DATA_BASE_PATH = "data/scannet"
+# _CN.DATASET.TEST_DATA_ROOT = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/test"
+# _CN.DATASET.TEST_POSE_ROOT = None                                                                           # (optional directory for poses)
+# _CN.DATASET.TEST_NPZ_ROOT = f"{_CN.DATASET.TEST_DATA_BASE_PATH}//index/scene_data/val_list"
+# _CN.DATASET.TEST_LIST_PATH = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/index/scene_data/val_list/scannet_test.txt"# None if test data from all scenes are bundled into a single npz file
+# _CN.DATASET.TEST_INTRINSIC_PATH = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/index/scene_data/val_list/intrinsics.npz"
+
 # general options
+_CN.DATASET.PARALLEL_WORKERS_NUM = 16
 _CN.DATASET.MIN_OVERLAP_SCORE_TRAIN = 0.0           # discard data with overlap_score < min_overlap_score
 _CN.DATASET.MIN_OVERLAP_SCORE_TEST = 0.0
 _CN.DATASET.AUGMENTATION_TYPE = "maff_lite"         # options: [None, "dark", "mobile", "maff", "maff_lite"]
@@ -71,29 +104,30 @@ _CN.SAMPLER.REPEAT = 1                              # how many times to be repea
 ########    Dataset Loader Configurations    ########
 _CN.LOADER = CN()
 _CN.LOADER.BATCH_SIZE = _CN.BATCH_SIZE              # how many samples per batch to load, per gpu
-_CN.LOADER.NUM_WORKERS = 12                         # how many subprocesses to use for data loading.
+_CN.LOADER.NUM_WORKERS = 4                          # how many subprocesses to use for data loading.
 _CN.LOADER.PIN_MEMORY = True                        # If True, the data loader will copy Tensors into device/CUDA pinned memory before returning them.
 
 ########    Trainer Configurations    ########
 _CN.TRAINER = CN()
 _CN.TRAINER.WORLD_SIZE = None                       # Will be calculated using number of nodes and exact number of devices available
-_CN.TRAINER.GRADIENT_CLIPPING = 0.5                 # Gradient clipping
-_CN.TRAINER.CANONICAL_BS = 64
-_CN.TRAINER.CANONICAL_LR = 3e-3                     # using LR finder provided by pytorch lightning if FIND_LR set to True
+_CN.TRAINER.GRADIENT_CLIPPING = 0.8                 # Gradient clipping
+_CN.TRAINER.CANONICAL_BS = 8
+_CN.TRAINER.CANONICAL_LR = 1e-3                     # using LR finder provided by pytorch lightning if FIND_LR set to True
 _CN.TRAINER.SCALING = None                          # this will be calculated automatically
 _CN.TRAINER.FIND_LR = False                         # use learning rate finder from pytorch-lightning, TODO: fix lr finder
 _CN.TRAINER.FIRST_STAGE_EPOCHS = 2                  # first stage epochs
 # gradient accumulation
-_CN.TRAINER.ACCUMULATE_GRAD_BATCHES = 8
+_CN.TRAINER.ACCUMULATE_GRAD_BATCHES = 1
 # optimizer
-_CN.TRAINER.OPTIMIZER = "AdamW"                     # options: [Adam, AdamW]
+_CN.TRAINER.OPTIMIZER = "AdamW"                       # options: [Adam, AdamW, SGD]
 _CN.TRAINER.TRUE_LR = None
 _CN.TRAINER.ADAM_DECAY = 0.1
 _CN.TRAINER.ADAMW_DECAY = 0.01
+_CN.TRAINER.SGD_MOMENTUM = 0.9
 # learning rate scheduler
 _CN.TRAINER.SCHEDULER = "MultiStepLR"                   # options: [MultiStepLR, CosineAnnealing, ExponentialLR, CosineAnnealingWarmRestarts]
 _CN.TRAINER.SCHEDULER_INTERVAL = "epoch"                # [epoch, step], automatically switch to step mode when using CosineAnnealing & CosineAnnealingWarmRestarts
-_CN.TRAINER.MSLR_MILESTONES = [4, 8, 10, 12]            # MSLR: MultiStepLR
+_CN.TRAINER.MSLR_MILESTONES = [6, 10, 12, 16, 18]       # MSLR: MultiStepLR
 _CN.TRAINER.MSLR_GAMMA = 0.1
 _CN.TRAINER.COSA_TMAX = 15                              # COSA: CosineAnnealing, Tmax, in epoch, will be converted to step automatically
 _CN.TRAINER.COSA_ETA_MIN = 1e-9                         # COSA: CosineAnnealing, eta_min
@@ -111,7 +145,7 @@ _CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 64                    # number of val/test par
 _CN.TRAINER.PLOT_MODE = 'evaluation'                    # ['evaluation', 'confidence']
 _CN.TRAINER.PLOT_MATCHES_ALPHA = 'dynamic'
 # For metric calculation
-_CN.TRAINER.RANSAC_PIXEL_THR = 0.2
+_CN.TRAINER.RANSAC_PIXEL_THR = 0.5
 _CN.TRAINER.RANSAC_CONF = 0.99999
 _CN.TRAINER.RANSAC_TIMES = 1
 _CN.TRAINER.EPI_ERR_THR = 5e-4 if _CN.DATASET.TRAINVAL_DATA_SOURCE == "ScanNet" else 1e-4   # recommendation: 5e-4 for ScanNet, 1e-4 for MegaDepth (from SuperGlue)
@@ -147,7 +181,7 @@ _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT = False        # Whether using depth map to
 
 # Feature Backbone
 _CN.MODEL.BACKBONE = CN()
-_CN.MODEL.BACKBONE.BACKBONE_TYPE = "VMamba_T_cropped"
+_CN.MODEL.BACKBONE.BACKBONE_TYPE = "VMamba_T_cropped_concat"
 _CN.MODEL.BACKBONE.VMAMBA_PRETRAINED = False
 # backbone options: 
 # [
@@ -157,6 +191,7 @@ _CN.MODEL.BACKBONE.VMAMBA_PRETRAINED = False
 #   "ResNet18_pretrained_FPN" , "VMamba_T_FPN", "VMamba_S_FPN", "VMamba_B_FPN",     <-- pretrained and with FPN
 #   "VMamba_T_cropped", "VMamba_S_cropped", "VMamba_B_cropped",                     <-- pretrained without last two layers, 1/2 is extracted after patch embedding with a pixel shuffle(x2)
 #   "VMamba_T_cropped_FPN"
+#   "VMamba_T_cropped_concat"
 #   "RepVGG", "RepVGG_FPN", "RepVGG_cropped"                                        <-- first two normal RepVGG, the last one is same as Efficient LoFTR, which patch size = 2
 #   "RepVGG_pretrained", "RepVGG_pretrained_FPN", "RepVGG_pretrained_cropped"       <-- pretrained, add a fpn, without last two layers
 # ]
@@ -171,40 +206,43 @@ _CN.MODEL.COARSE_ENCODER = CN()
 _CN.MODEL.COARSE_ENCODER.NUM_LAYERS = 2
 _CN.MODEL.COARSE_ENCODER.INNER_EXPANSION = 2
 _CN.MODEL.COARSE_ENCODER.CONV_DIM = 3
-_CN.MODEL.COARSE_ENCODER.DELTA = 16
+_CN.MODEL.COARSE_ENCODER.DELTA = 4
 _CN.MODEL.COARSE_ENCODER.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
+_CN.MODEL.COARSE_ENCODER.DROP_RATE = 0.01
 
 # Fine Encoder
 _CN.MODEL.FINE_ENCODER = CN()
-_CN.MODEL.FINE_ENCODER.NUM_LAYERS = 4
+_CN.MODEL.FINE_ENCODER.NUM_LAYERS = 2
+_CN.MODEL.FINE_ENCODER.DROP_RATE = 0.0
 
 # Coarse matching
 _CN.MODEL.COARSE_MATCHING = CN()
-_CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.25
-_CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 5000
+_CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.2
+_CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 4000
 
 # Intermediate matching
 _CN.MODEL.INTERMEDIATE_MATCHING = CN()
 _CN.MODEL.INTERMEDIATE_MATCHING.THRESHOLD = 0.1
-_CN.MODEL.INTERMEDIATE_MATCHING.MAX_MATCHES = 10000
+_CN.MODEL.INTERMEDIATE_MATCHING.MAX_MATCHES = 8000
 _CN.MODEL.INTERMEDIATE_MATCHING.TRAIN_NOISE_SCALE = 2.0
 
 # Refinement
 _CN.MODEL.REFINEMENT = CN()
-_CN.MODEL.REFINEMENT.GRU = True
+_CN.MODEL.REFINEMENT.HIDDEN_DIM = 32
+_CN.MODEL.REFINEMENT.CONTEXT_INJECTION = True
 
 ########    Loss Configurations    ########
 _CN.LOSS = CN()
 _CN.LOSS.VERSION = _CN.MODEL.VERSION
 # COARSE MATCHING
-_CN.LOSS.COARSE_WEIGHT = 1.0
+_CN.LOSS.COARSE_WEIGHT = 0.25
 _CN.LOSS.FOCAL_GAMMA_COARSE = 2.0
 # INTERMEDIATE MATCHING
-_CN.LOSS.INTERMEDIATE_WEIGHT = 1.0
+_CN.LOSS.INTERMEDIATE_WEIGHT = 0.25
 _CN.LOSS.FOCAL_GAMMA_INTERMEDIATE = 2.0
 # FINE MATCHING
 _CN.LOSS.FINE_WEIGHT = 10.0
-_CN.LOSS.FINE_TYPE = 'l2'                   # options: ['l2', 'l1', 'huber']
+_CN.LOSS.FINE_TYPE = 'l2'                        # options: ['l2', 'l1', 'huber']
 _CN.LOSS.FINE_THR = 1.0
 _CN.LOSS.ITER_DECAY_GAMMA = 0.8
 # CONFIDENCE MASK REFINEMENT
@@ -289,7 +327,7 @@ if _CN.MODEL.VERSION == "v1":
                             (f"_I{_CN.MODEL.REFINE_ITERS}R{_CN.MODEL.REFINE_LOOKUP_RADIUS}_") + \
                             ("D" if _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT else "") + \
                             ("A" if _CN.DATASET.AUGMENTATION_TYPE is not None else "") + \
-                            ("nGRU" if not _CN.MODEL.REFINEMENT.GRU else "")
+                            ("nCTXT" if not _CN.MODEL.REFINEMENT.CONTEXT_INJECTION else "")
 
 
 def get_cfg_defaults():

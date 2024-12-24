@@ -5,7 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 from loguru import logger
 import torch
-from torch.optim import Adam, AdamW
+from torch.optim import Adam, AdamW, SGD
 from torch.optim.lr_scheduler import (
     MultiStepLR,
     CosineAnnealingLR,
@@ -135,6 +135,12 @@ class PL_RCRM(pl.LightningModule):
                 self.parameters(),
                 lr=self.lr,
                 weight_decay=self.config.TRAINER.ADAMW_DECAY,
+            )
+        elif self.config.TRAINER.OPTIMIZER == "SGD":
+            optimizer = SGD(
+                self.parameters(),
+                lr=self.lr,
+                momentum=self.config.TRAINER.SGD_MOMENTUM,
             )
         else:
             # Default: AdamW

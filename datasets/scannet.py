@@ -106,6 +106,8 @@ class ScanNetDataset(utils.data.Dataset):
             "depth1": depth1,
             "T_0to1": T_0to1,  # (4, 4)
             "T_1to0": T_1to0,
+            "scale0": torch.tensor([1.0, 1.0]),
+            "scale1": torch.tensor([1.0, 1.0]),
             "K0": K_0,  # (3, 3)
             "K1": K_1,
             "dataset_name": "ScanNet",

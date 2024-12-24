@@ -96,18 +96,7 @@ class RCRM_Loss(nn.Module):
                 )
                 with torch.no_grad():
                     total_offset += offset[i].detach()
-
-        # 3. Compute reg loss for similarity matrix in fine matching
-        spatial_expectation_f = data["spatial_expectation_f"]
-        if not correct_mask.any():
-            loss_f3 = None
-        else:
-            loss_f3 = torch.tensor(0.0, device=offset.device)
-            loss_f3 += self.fine_loss_func(
-                spatial_expectation_f, offset_gt, correct_mask
-            )
-        return loss_f1, loss_f2, loss_f3
-        # return loss_f1, loss_f2
+        return loss_f1, loss_f2
 
     def _compute_fine_loss_l2(self, coord_offset_f, coord_offset_f_gt, correct_mask):
         """
@@ -191,16 +180,15 @@ class RCRM_Loss(nn.Module):
         loss_c = self.compute_coarse_loss(data)
         if loss_c is not None:
             loss += loss_c * self.coarse_weight
-            loss_scalars.update({"loss_c": loss_c.clone().detach().cpu()})
+            loss_scalars.update({"loss_c": loss_c.clone().detach().cpu() * 0.25})
         else:
             loss_scalars.update({"loss_c": torch.tensor(0.0).clone().detach().cpu()})
 
         # 2. Fine-level loss
-        loss_f1, loss_f2, loss_f3 = self.compute_fine_loss_v1(data=data)
-        # loss_f1, loss_f2 = self.compute_fine_loss_v1(data=data)
+        loss_f1, loss_f2 = self.compute_fine_loss_v1(data=data)
         if loss_f1 is not None and loss_f1.item() != torch.nan:
             loss += loss_f1 * self.intermediate_weight
-            loss_scalars.update({"loss_f1": loss_f1.clone().detach().cpu()})
+            loss_scalars.update({"loss_f1": loss_f1.clone().detach().cpu() * 0.25})
         else:
             loss_scalars.update({"loss_f1": torch.tensor(0.0).clone().detach().cpu()})
         if loss_f2 is not None and loss_f2.item() != torch.nan:
@@ -208,11 +196,6 @@ class RCRM_Loss(nn.Module):
             loss_scalars.update({"loss_f2": loss_f2.clone().detach().cpu()})
         else:
             loss_scalars.update({"loss_f2": torch.tensor(0.0).clone().detach().cpu()})
-        if loss_f3 is not None and loss_f3.item() != torch.nan:
-            loss += loss_f3 * self.intermediate_weight
-            loss_scalars.update({"loss_f3": loss_f3.clone().detach().cpu()})
-        else:
-            loss_scalars.update({"loss_f3": torch.tensor(0.0).clone().detach().cpu()})
 
         # 3. Total loss
         data.update({"loss": loss, "loss_scalars": loss_scalars})

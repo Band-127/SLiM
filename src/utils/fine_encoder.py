@@ -4,8 +4,11 @@ from torch.nn import functional as F
 from typing import Tuple
 from einops.einops import rearrange
 from typing import List
+from timm.models.layers import trunc_normal_, DropPath
+
 from src.utils.misc import LayerNorm2d
 from src.mamba.MambaEncoder import MambaLayer
+from src.utils.inception_like_cnn import InceptionNeXt
 
 
 class QuadTreeFineEncoder(nn.Module):
@@ -128,7 +131,9 @@ class QuadTreeFineEncoder(nn.Module):
 
 
 class FineEncoder_conv(nn.Module):
-    def __init__(self, input_dim: int, output_dim: int, num_layers: int) -> None:
+    def __init__(
+        self, input_dim: int, output_dim: int, num_layers: int, drop_rate: float
+    ) -> None:
         super(FineEncoder_conv, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
@@ -149,7 +154,7 @@ class FineEncoder_conv(nn.Module):
                         self.output_dim, self.output_dim, kernel_size=3, padding=1
                     ),
                     LayerNorm2d(self.output_dim),
-                    nn.ReLU(),
+                    nn.GELU(approximate="tanh"),
                     nn.Conv2d(
                         self.output_dim, self.output_dim, kernel_size=3, padding=1
                     ),
@@ -157,16 +162,42 @@ class FineEncoder_conv(nn.Module):
                 for _ in range(num_layers)
             ]
         )
-
-        self.output_activation = nn.ReLU()
+        # self.main_conv = nn.ModuleList(
+        #     [
+        #         nn.Sequential(
+        #             LayerNorm2d(self.output_dim),
+        #             nn.Conv2d(
+        #                 self.output_dim,
+        #                 self.output_dim,
+        #                 kernel_size=7,
+        #                 padding=3,
+        #                 groups=self.output_dim,
+        #             ),
+        #             nn.Conv2d(self.output_dim, 4 * self.output_dim, kernel_size=1),
+        #             LayerNorm2d(4 * self.output_dim),
+        #             nn.GELU(approximate="tanh"),
+        #             nn.Conv2d(4 * self.output_dim, self.output_dim, kernel_size=1),
+        #         )
+        #         for _ in range(num_layers)
+        #     ]
+        # )
+        # self.main_conv = nn.ModuleList(
+        #     [
+        #         InceptionNeXt(
+        #             in_output_dim=self.output_dim, kernel_size=9, split_ratio=4
+        #         )
+        #         for _ in range(num_layers)
+        #     ]
+        # )
+        self.drop_path = DropPath(drop_rate) if drop_rate > 0.0 else nn.Identity()
 
         # Initialize weights
         with torch.no_grad():
             for m in self.modules():
                 if isinstance(m, nn.Conv2d):
-                    nn.init.kaiming_normal_(
-                        m.weight, mode="fan_out", nonlinearity="relu"
-                    )
+                    trunc_normal_(m.weight, std=0.02)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
                 elif isinstance(m, nn.LayerNorm):
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
@@ -183,12 +214,20 @@ class FineEncoder_conv(nn.Module):
             _ = self.forward(random_data_0, random_data_1)
         torch.cuda.empty_cache()
 
-    def forward(self, x1, x2):
-        x1 = self.input_conv(x1)
-        x2 = self.input_conv(x2)
+    def forward(self, x0, x1):
+        B = x0.size(0)
+        # Concatenate x0 and x1 along the batch dimension
+        x = torch.cat([x0, x1], dim=0)
+        x = self.input_conv(x)
+        # x0 = self.input_conv(x0)
+        # x1 = self.input_conv(x1)
 
         for i in range(self.num_layers):
-            x1 = self.output_activation(self.main_conv[i](x1) + x1)
-            x2 = self.output_activation(self.main_conv[i](x2) + x2)
+            x = self.drop_path(self.main_conv[i](x)) + x
+            # x0 = self.drop_path(self.main_conv[i](x0)) + x0
+            # x1 = self.drop_path(self.main_conv[i](x1)) + x1
 
-        return x1, x2
+        x0 = x[:B]
+        x1 = x[B:]
+
+        return x0, x1

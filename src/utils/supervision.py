@@ -54,9 +54,17 @@ def spvs_coarse(data, coarse_scale):
     _, _, H1, W1 = data["image1"].shape
     # 获取第二张图像的形状
     scale = coarse_scale
-    scale0 = scale * data["scale0"][:, None] if "scale0" in data else scale
+    scale0 = (
+        scale * data["scale0"][:, None]
+        if "scale0" in data
+        else torch.tensor([[scale, scale]], device=device).repeat(N, 1)[:, None]
+    )
     # 计算尺度0
-    scale1 = scale * data["scale1"][:, None] if "scale1" in data else scale
+    scale1 = (
+        scale * data["scale1"][:, None]
+        if "scale1" in data
+        else torch.tensor([[scale, scale]], device=device).repeat(N, 1)[:, None]
+    )
     # 计算尺度1
     h0, w0, h1, w1 = map(lambda x: x // scale, [H0, W0, H1, W1])
     # 计算缩放后的高宽
@@ -209,12 +217,23 @@ def get_coarse_coord(data, config):
     W0_c = data["image0"].shape[3] // coarse_scale
     W1_c = data["image1"].shape[3] // coarse_scale
 
+    device = data["image0"].device
+    N = data["image0"].shape[0]
+
     # Match indices -> coordinates
     scale0 = (
-        coarse_scale * data["scale0"][b_idx_c] if "scale0" in data else coarse_scale
+        coarse_scale * data["scale0"][b_idx_c]
+        if "scale0" in data
+        else torch.tensor([[coarse_scale, coarse_scale]], device=device).repeat(N, 1)[
+            b_idx_c
+        ]
     )
     scale1 = (
-        coarse_scale * data["scale1"][b_idx_c] if "scale1" in data else coarse_scale
+        coarse_scale * data["scale1"][b_idx_c]
+        if "scale1" in data
+        else torch.tensor([[coarse_scale, coarse_scale]], device=device).repeat(N, 1)[
+            b_idx_c
+        ]
     )
     coarse_coord_0 = (
         torch.stack(
@@ -242,7 +261,7 @@ def get_coarse_coord(data, config):
 @torch.no_grad()
 def spvs_intermediate_v1(data, config):
     device = data["image0"].device
-    _, _, H0, W0 = data["image0"].shape
+    N, _, H0, W0 = data["image0"].shape
     _, _, H1, W1 = data["image1"].shape
     coarse_coord_0, coarse_coord_1 = get_coarse_coord(data, config)
     coarse_scale = config["MODEL"]["COARSE_SCALE"]
@@ -251,10 +270,18 @@ def spvs_intermediate_v1(data, config):
 
     window_size = int(coarse_scale / fine_scale)  # w
     absolute_fine_scale0 = (
-        fine_scale * data["scale0"][b_idx_c] if "scale0" in data else fine_scale
+        fine_scale * data["scale0"][b_idx_c]
+        if "scale0" in data
+        else torch.tensor([[fine_scale, fine_scale]], device=device).repeat(N, 1)[
+            b_idx_c
+        ]
     )  # [M, 2]
     absolute_fine_scale1 = (
-        fine_scale * data["scale1"][b_idx_c] if "scale1" in data else fine_scale
+        fine_scale * data["scale1"][b_idx_c]
+        if "scale1" in data
+        else torch.tensor([[fine_scale, fine_scale]], device=device).repeat(N, 1)[
+            b_idx_c
+        ]
     )  # [M, 2]
     # Indices for the top-left corner of the window
     intermediate_coord_0 = (
@@ -287,10 +314,14 @@ def spvs_intermediate_v1(data, config):
     for b in b_idx_c_unique:
         batch_mask = b_idx_c == b  # [M]
         absolute_fine_scale0 = (
-            fine_scale * data["scale0"][b] if "scale0" in data else fine_scale
+            fine_scale * data["scale0"][b]
+            if "scale0" in data
+            else torch.tensor([fine_scale, fine_scale], device=device)
         )  # [2]
         absolute_fine_scale1 = (
-            fine_scale * data["scale1"][b] if "scale1" in data else fine_scale
+            fine_scale * data["scale1"][b]
+            if "scale1" in data
+            else torch.tensor([fine_scale, fine_scale], device=device)
         )  # [2]
         intermediate_coord_0_single_batch = intermediate_coord_0[batch_mask]  # [M', 2]
         intermediate_coord_1_single_batch = intermediate_coord_1[batch_mask]  # [M', 2]
@@ -451,11 +482,18 @@ def spvs_fine_v1(data, config):
     """
     coarse_scale = config["MODEL"]["COARSE_SCALE"]
     fine_scale = config["MODEL"]["FINE_SCALE"]
-    absolute_scale1 = fine_scale * data["scale1"] if "scale1" in data else fine_scale
+    device = data["image0"].device
+    N = data["image0"].shape[0]
+    absolute_scale1 = (
+        fine_scale * data["scale1"]
+        if "scale1" in data
+        else torch.tensor([[fine_scale, fine_scale]], device=device).repeat(N, 1)
+    )
 
     # Get predicted fine coordinates of image0 and batch_indices
     fine_coord_0 = data["fine_coord_0"]  # [N, 2]
     intermediate_coord_1 = data["intermediate_coord_1"]  # [N, 2]
+    target_fine_coord_1 = torch.zeros_like(fine_coord_0)  # [N, 2]
     offset_f_1 = torch.zeros_like(fine_coord_0)  # [N, 2]
     radius = int(config["MODEL"]["REFINE_LOOKUP_RADIUS"])
     batch_idx = data["b_idx_it"]  # [N]
@@ -478,6 +516,7 @@ def spvs_fine_v1(data, config):
             / absolute_scale1[b]
             / radius
         )
+        target_fine_coord_1[batch_mask] = target_fine_coord_1_single_batch[0]
 
     # Get correct mask
     correct_mask = (
@@ -486,6 +525,7 @@ def spvs_fine_v1(data, config):
     )
 
     data.update({"correct_mask": correct_mask, "coord_offset_gt": offset_f_1})
+    data.update({"fine_coord_1_gt": target_fine_coord_1})
 
 
 def compute_supervision_fine(data, config):

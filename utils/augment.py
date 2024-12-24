@@ -88,6 +88,8 @@ class MAFFLiteAug(object):
                     saturation=0.2,
                     hue=0.5,
                 ),
+                A.RandomRain(p=0.05),
+                A.RandomSunFlare(p=0.05),
                 A.Blur(p=0.1, blur_limit=(3, 9)),
                 A.ImageCompression(p=0.1, quality_lower=60, quality_upper=80),
                 A.ISONoise(p=0.1),
@@ -119,7 +121,7 @@ def get_augmentor_builder(method=None, **kwargs):
     elif method == "mobile":
         return MobileAug
     elif method == "maff":
-        return MAFFAug    
+        return MAFFAug
     elif method == "maff_lite":
         return MAFFLiteAug
     elif method is None:

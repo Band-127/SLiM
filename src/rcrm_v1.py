@@ -13,8 +13,10 @@ from src.utils.any_input_identity import AnyInputIdentity
 from src.utils.coarse_encoder import CoarseEncoder
 from src.utils.fine_encoder import FineEncoder_conv
 from src.utils.recurrent_refinement import RecurrentRefinementUnit
+from src.utils.cross_pixel_refinement import CrossPixelRefinement
 from src.utils.misc import create_grid
 from utils.misc import Timer
+from fvcore.nn import FlopCountAnalysis, flop_count_str, flop_count, parameter_count
 
 
 class RCRM_v1(nn.Module):
@@ -86,6 +88,7 @@ class RCRM_v1(nn.Module):
                 conv_dim=config["COARSE_ENCODER"]["CONV_DIM"],
                 delta=config["COARSE_ENCODER"]["DELTA"],
                 using_mamba2=config["COARSE_ENCODER"]["USING_MAMBA2"],
+                drop_rate=config["COARSE_ENCODER"]["DROP_RATE"],
             )
             if config["COARSE_ENCODER"]["NUM_LAYERS"] > 0
             else AnyInputIdentity()
@@ -100,6 +103,7 @@ class RCRM_v1(nn.Module):
                 input_dim=config["BACKBONE"]["LAYER_DIMS"][self.fine_scale_idx],
                 output_dim=self.d_fine,
                 num_layers=config["FINE_ENCODER"]["NUM_LAYERS"],
+                drop_rate=config["FINE_ENCODER"]["DROP_RATE"],
             )
             if config["FINE_ENCODER"]["NUM_LAYERS"] > 0
             else nn.Identity()
@@ -107,8 +111,10 @@ class RCRM_v1(nn.Module):
 
         # 7. Recurrent Refinement Unit
         self.recurrent_refine_unit = RecurrentRefinementUnit(
-            in_output_dim=self.d_fine,
-            gru=config["REFINEMENT"]["GRU"],
+            input_dim=self.d_fine,
+            hidden_dim=config["REFINEMENT"]["HIDDEN_DIM"],
+            lookup_radius=config["REFINE_LOOKUP_RADIUS"],
+            context=config["REFINEMENT"]["CONTEXT_INJECTION"],
         )
 
     def forward(self, data: dict, training: bool = False):
@@ -207,9 +213,8 @@ class RCRM_v1(nn.Module):
     def _forward_test(self, data: dict):
         start_time = time.perf_counter()
         # 1. Feature extraction
-        x0, x1 = (
-            self.feature_backbone(data["image0"]),
-            self.feature_backbone(data["image1"]),
+        x0, x1 = self.feature_backbone(
+            data["image0"], data["image1"]
         )  # S, [B x C x H x W], from fine to coarse, from shallow to deep
         mask0, mask1 = (
             (
@@ -307,9 +312,8 @@ class RCRM_v1(nn.Module):
     def _forward_train(self, data: dict):
         start_time = time.perf_counter()
         # 1. Feature extraction
-        x0, x1 = (
-            self.feature_backbone(data["image0"]),
-            self.feature_backbone(data["image1"]),
+        x0, x1 = self.feature_backbone(
+            data["image0"], data["image1"]
         )  # S, [B x C x H x W], from fine to coarse, from shallow to deep
         mask0, mask1 = (
             (
@@ -405,14 +409,23 @@ class RCRM_v1(nn.Module):
         )
 
     def _forward_print_memory(self, data: dict):
+        data.update(
+            {
+                "batch_size": data["image0"].shape[0],
+                "hw0_i": data["image0"].shape[2:],
+                "hw1_i": data["image1"].shape[2:],
+                "coarse_scale": self.coarse_scale,
+                "fine_scale": self.fine_scale,
+                "refine_iters": self.refine_iters,
+            }
+        )
+
         print(
             f"Initial memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
         )
         with Timer("Feature extraction"):
-            # 1. Feature extraction
-            x0, x1 = (
-                self.feature_backbone(data["image0"]),
-                self.feature_backbone(data["image1"]),
+            x0, x1 = self.feature_backbone(
+                data["image0"], data["image1"]
             )  # S, [B x C x H x W], from fine to coarse, from shallow to deep
             mask0, mask1 = (
                 (
@@ -705,9 +718,9 @@ class RCRM_v1(nn.Module):
         )
 
         # 4. Get similarity matrix
-        sim_matrix = torch.einsum(
-            "blc,bsc->bls", feat0_window.detach(), feat1_window.detach()
-        ) / (self.fine_temperature + 1e-4)  # M, Lf0, Lf1
+        sim_matrix = torch.einsum("blc,bsc->bls", feat0_window, feat1_window) / (
+            self.fine_temperature + 1e-4
+        )  # M, Lf0, Lf1
 
         # 5. Update sim matrix
         data.update({"sim_matrix_f": sim_matrix})
@@ -749,51 +762,6 @@ class RCRM_v1(nn.Module):
                 "num_matches": noisy_coord_1.shape[0],
             }
         )
-
-        # For loss
-        feat0 = data["feat0_f"]  # B, C, H, W
-        feat1 = data["feat1_f"]  # B, C, H, W
-        C = feat0.shape[1]
-        b_idx_it = data["spv_b_ids_it"][idx]  # N
-        scale0 = (
-            data["scale0"][b_idx_it] * self.fine_scale
-            if "scale0" in data
-            else self.fine_scale
-        )  # N, 2
-        scale1 = (
-            data["scale1"][b_idx_it] * self.fine_scale
-            if "scale1" in data
-            else self.fine_scale
-        )  # N, 2
-        fine_coord_0 = data["intermediate_coord_0_gt"][idx]  # N, 2
-        fine_coord_1 = data["intermediate_coord_1_gt"][idx].clone()
-        lookup_window_size = self.refine_lookup_radius * 2
-
-        with torch.enable_grad():
-            # 1. Get feature in image0 using intermediate matches
-            feat0_picked = (
-                self._extract_feat_window_bilinear(
-                    feat0, b_idx_it, fine_coord_0 / scale0, 1
-                )[:, :, 0, 0]
-                / C**0.5
-            )  # N, C
-
-            # 2. Get feature windows in image1 using intermediate matches
-            feat1_window = (
-                self._extract_feat_window_bilinear(
-                    feat1, b_idx_it, fine_coord_1 / scale1, lookup_window_size
-                )
-                / C**0.5
-            )  # N, C, H, W
-
-            # 3. Get correlation matrix
-            window_heatmap = self._softmax2d(
-                torch.einsum("bc,bchw->bhw", feat0_picked, feat1_window)
-            )  # N, H, W
-            spatial_expectation = dsnt.spatial_expectation2d(
-                window_heatmap[None], True
-            )[0]  # 2
-            data.update({"spatial_expectation_f": spatial_expectation})
 
     @torch.no_grad()
     def _get_intermediate_coord_test(self, data: dict):
@@ -1005,7 +973,12 @@ class RCRM_v1(nn.Module):
             False
         )  # N, 2
         hidden_state = torch.zeros(
-            (b_idx_it.shape[0], self.d_fine, lookup_window_size, lookup_window_size),
+            (
+                b_idx_it.shape[0],
+                self.recurrent_refine_unit.hidden_dim,
+                lookup_window_size,
+                lookup_window_size,
+            ),
             device=feat0.device,
             dtype=feat0.dtype,
         )  # Initial hidden state, [N, C, H, W]
@@ -1061,10 +1034,13 @@ class RCRM_v1(nn.Module):
 
     def initial_forward(self):
         if hasattr(self.coarse_encoder, "initial_forward"):
-            self.coarse_encoder.initial_forward()
+            self.coarse_encoder.initial_forward(
+                size=int(self.config["BACKBONE"]["INPUT_SIZE"] / self.coarse_scale),
+                batch_size=self.config["BATCH_SIZE"],
+            )
         if hasattr(self.fine_encoder, "initial_forward"):
             self.fine_encoder.initial_forward(
-                size=self.config["BACKBONE"]["INPUT_SIZE"],
+                size=int(self.config["BACKBONE"]["INPUT_SIZE"] / self.fine_scale),
                 batch_size=self.config["BATCH_SIZE"],
             )
         if hasattr(self.recurrent_refine_unit, "initial_forward"):
