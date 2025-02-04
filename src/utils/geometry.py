@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 
 
-@torch.no_grad()
+@torch.no_grad
 def warp_kpts(kpts0, depth0, depth1, T_0to1, K0, K1):
     """Warp kpts0 from I0 to I1 with depth, K and Rt
     Also check covisibility and depth consistency.
@@ -23,8 +23,8 @@ def warp_kpts(kpts0, depth0, depth1, T_0to1, K0, K1):
     # Get depth using grid sample from torch
     h, w = depth0.shape[1:]
     kpts0_normalized = kpts0.clone()
-    kpts0_normalized[:, :, 0] = (kpts0[:, :, 0] / (w - 1)) * 2 - 1
-    kpts0_normalized[:, :, 1] = (kpts0[:, :, 1] / (h - 1)) * 2 - 1
+    kpts0_normalized[:, :, 0] = (kpts0[:, :, 0] / (w)) * 2 - 1
+    kpts0_normalized[:, :, 1] = (kpts0[:, :, 1] / (h)) * 2 - 1
 
     kpts0_normalized = kpts0_normalized.unsqueeze(1)  # (N, 1, L, 2)
     depth0 = depth0.unsqueeze(1)  # Add depth channel (N, 1, H, W)

@@ -1,0 +1,4 @@
+# ninja log v5
+1	19028	1736770994934697905	/home/wss/Mamba-Matching/second_try/src/backbone/vssm/kernels/selective_scan/build/temp.linux-x86_64-cpython-310/csrc/selective_scan/cusoflex/selective_scan_oflex.o	81a46111a1385e8d
+0	20397	1736770996302693607	/home/wss/Mamba-Matching/second_try/src/backbone/vssm/kernels/selective_scan/build/temp.linux-x86_64-cpython-310/csrc/selective_scan/cusoflex/selective_scan_core_fwd.o	ab9cf9dbb892a4c2
+0	72799	1736771048726530071	/home/wss/Mamba-Matching/second_try/src/backbone/vssm/kernels/selective_scan/build/temp.linux-x86_64-cpython-310/csrc/selective_scan/cusoflex/selective_scan_core_bwd.o	a4b13639d9130b92

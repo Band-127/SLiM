@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from typing import Tuple
+from typing import Tuple, Sequence
 from einops.einops import rearrange
 from typing import List
 from timm.models.layers import trunc_normal_, DropPath
@@ -151,44 +151,18 @@ class FineEncoder_conv(nn.Module):
                 nn.Sequential(
                     LayerNorm2d(self.output_dim),
                     nn.Conv2d(
-                        self.output_dim, self.output_dim, kernel_size=3, padding=1
+                        self.output_dim, self.output_dim * 2, kernel_size=3, padding=1
                     ),
-                    LayerNorm2d(self.output_dim),
+                    LayerNorm2d(self.output_dim * 2),
                     nn.GELU(approximate="tanh"),
                     nn.Conv2d(
-                        self.output_dim, self.output_dim, kernel_size=3, padding=1
+                        self.output_dim * 2, self.output_dim, kernel_size=3, padding=1
                     ),
                 )
                 for _ in range(num_layers)
             ]
         )
-        # self.main_conv = nn.ModuleList(
-        #     [
-        #         nn.Sequential(
-        #             LayerNorm2d(self.output_dim),
-        #             nn.Conv2d(
-        #                 self.output_dim,
-        #                 self.output_dim,
-        #                 kernel_size=7,
-        #                 padding=3,
-        #                 groups=self.output_dim,
-        #             ),
-        #             nn.Conv2d(self.output_dim, 4 * self.output_dim, kernel_size=1),
-        #             LayerNorm2d(4 * self.output_dim),
-        #             nn.GELU(approximate="tanh"),
-        #             nn.Conv2d(4 * self.output_dim, self.output_dim, kernel_size=1),
-        #         )
-        #         for _ in range(num_layers)
-        #     ]
-        # )
-        # self.main_conv = nn.ModuleList(
-        #     [
-        #         InceptionNeXt(
-        #             in_output_dim=self.output_dim, kernel_size=9, split_ratio=4
-        #         )
-        #         for _ in range(num_layers)
-        #     ]
-        # )
+
         self.drop_path = DropPath(drop_rate) if drop_rate > 0.0 else nn.Identity()
 
         # Initialize weights
@@ -202,13 +176,13 @@ class FineEncoder_conv(nn.Module):
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
 
-    @torch.no_grad()
-    def initial_forward(self, size: int, batch_size: int):
+    @torch.no_grad
+    def initial_forward(self, size: Sequence[int], batch_size: int):
         for i in range(5):
-            random_data_0 = torch.randn(batch_size, self.input_dim, size, size).to(
+            random_data_0 = torch.randn(batch_size, self.input_dim, size[0], size[1]).to(
                 self.input_conv.weight.device
             )
-            random_data_1 = torch.randn(batch_size, self.input_dim, size, size).to(
+            random_data_1 = torch.randn(batch_size, self.input_dim, size[0], size[1]).to(
                 self.input_conv.weight.device
             )
             _ = self.forward(random_data_0, random_data_1)
@@ -219,13 +193,27 @@ class FineEncoder_conv(nn.Module):
         # Concatenate x0 and x1 along the batch dimension
         x = torch.cat([x0, x1], dim=0)
         x = self.input_conv(x)
-        # x0 = self.input_conv(x0)
-        # x1 = self.input_conv(x1)
 
         for i in range(self.num_layers):
             x = self.drop_path(self.main_conv[i](x)) + x
-            # x0 = self.drop_path(self.main_conv[i](x0)) + x0
-            # x1 = self.drop_path(self.main_conv[i](x1)) + x1
+
+        x0 = x[:B]
+        x1 = x[B:]
+
+        return x0, x1
+
+
+class FineEncoder_upsample(nn.Module):
+    def __init__(self, dim: int) -> None:
+        super(FineEncoder_upsample, self).__init__()
+        self.dim = int(dim)
+
+    def forward(self, x0, x1):
+        B = x0.size(0)
+
+        x = torch.cat([x0, x1], dim=0)
+
+        x = F.interpolate(x, scale_factor=2.0, mode="bilinear", align_corners=False)
 
         x0 = x[:B]
         x1 = x[B:]

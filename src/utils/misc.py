@@ -21,6 +21,15 @@ class LayerNorm2d(nn.LayerNorm):
         return x
 
 
+class Alpha(nn.Module):
+    def __init__(self, alpha=1):
+        super().__init__()
+        self.alpha = nn.Parameter(torch.tensor([alpha], dtype=torch.float32))
+
+    def forward(self, x):
+        return self.alpha * x
+
+
 def create_grid(row_indices: torch.Tensor, col_indices: torch.Tensor) -> torch.Tensor:
     """
     Create a grid of shape (M, W, W, 2).

@@ -89,6 +89,12 @@ class PL_RCRM(pl.LightningModule):
         self.true_batch_size = (
             config.LOADER.BATCH_SIZE * config.TRAINER.ACCUMULATE_GRAD_BATCHES
         )
+        self.max_input_size = config.IMAGE_SIZE
+        self.image_size_factor = config.IMAGE_SIZE_FACTOR
+        self.max_input_multiplier = int(self.max_input_size // self.image_size_factor)
+        self.min_input_multiplier = config.IMAGE_SIZE_MIN_MULT
+        self.val_input_size = config.VAL_IMAGE_SIZE
+        self.current_train_input_size = self.current_input_size = config.IMAGE_SIZE
 
         if config["MODEL"]["VERSION"] == "v1":
             _RCRM = RCRM_v1
@@ -351,18 +357,22 @@ class PL_RCRM(pl.LightningModule):
             if self.trainer.global_rank == 0:
                 print(self.rcrm)
                 print_params_summary(self.rcrm, recursive=False)
-            # self.rcrm.intermediate_noise_scale = 0.0
-            # self.loss.fine_weight = 1.0
-            # self.loss.intermediate_weight = 0.1
-            # self.loss.coarse_weight = 1.0
-        if self.trainer.current_epoch == self.first_stage_epochs:
-            # self.rcrm.intermediate_noise_scale = (
-            #     self.config.MODEL.INTERMEDIATE_MATCHING.TRAIN_NOISE_SCALE
-            # )
-            # self.loss.fine_weight = 1.0
-            # self.loss.intermediate_weight = 0.01
-            # self.loss.coarse_weight = 1.0
+        if self.trainer.current_epoch < self.first_stage_epochs:
+            if self.trainer.global_rank == 0:
+                # Random input size
+                input_size = (
+                    self.max_input_multiplier
+                    - int(
+                        min(np.abs(np.random.randn(1)), 4)
+                        / 4
+                        * (self.max_input_multiplier - self.min_input_multiplier)
+                    )
+                ) * self.image_size_factor
+                self.set_input_size(input_size)
+        elif self.trainer.current_epoch == self.first_stage_epochs:
             self.loss.turn_off_conf_mask_loss = True
+            if self.trainer.global_rank == 0:
+                self.set_input_size(self.max_input_size)
         self.rcrm.train()
         self.rcrm.initial_forward()
 
@@ -381,7 +391,8 @@ class PL_RCRM(pl.LightningModule):
         self.train_forward_times.clear()
 
     def validation_step(self, batch, batch_idx):
-        self._trainval_inference(batch, training=self.show_gt_matched_fine_on_val)
+        with torch.no_grad():
+            self._trainval_inference(batch, training=self.show_gt_matched_fine_on_val)
 
         # All timers
         keys = test_timer_list
@@ -408,10 +419,15 @@ class PL_RCRM(pl.LightningModule):
         )
 
     def on_validation_epoch_start(self):
+        if self.trainer.global_rank == 0:
+            self.current_train_input_size = self.current_input_size
+            self.set_input_size(self.val_input_size)
         self.rcrm.eval()
         self.rcrm.initial_forward()
 
     def on_validation_epoch_end(self):
+        if self.trainer.global_rank == 0:
+            self.set_input_size(self.current_train_input_size)
         # handle multiple validation sets
         multi_outputs = (
             [self.validation_outputs]
@@ -577,7 +593,7 @@ class PL_RCRM(pl.LightningModule):
             # time
             if len(self.test_forward_times) > 0:
                 avg_forward_time = self.calculate_trimmed_mean(self.test_forward_times)
-                print(f"Avg forward time: {avg_forward_time*1000: 8.4}ms")
+                print(f"Avg forward time: {avg_forward_time * 1000: 8.4}ms")
                 self.test_forward_times.clear()
             keys = test_timer_list
             if len(self.test_parts_times.keys()) and len(
@@ -588,10 +604,9 @@ class PL_RCRM(pl.LightningModule):
                         self.test_parts_times[k]
                     )
                     print(
-                        f"Avg forward time for {k}: {avg_time_for_this_part*1000: 8.4}ms"
+                        f"Avg forward time for {k}: {avg_time_for_this_part * 1000: 8.4}ms"
                     )
                     self.test_parts_times[k].clear()
-            print(self.profiler.summary())
             val_metrics_4tb = aggregate_metrics(
                 metrics, self.config.TRAINER.EPI_ERR_THR
             )
@@ -609,3 +624,17 @@ class PL_RCRM(pl.LightningModule):
         trimmed_list = sorted_list[trim_count:-trim_count]
         avg = sum(trimmed_list) / len(trimmed_list)
         return avg
+
+    def set_input_size(self, size=int):
+        print(f"Input Size: {size}")
+        if self.current_input_size == size:
+            return
+        if self.config.DATASET.TRAINVAL_DATA_SOURCE != "MegaDepth":
+            return
+        if self.trainer.state.fn == "fit" or self.trainer.state.fn == "validate":
+            if self.trainer.train_dataloader is not None:
+                for d in self.trainer.train_dataloader.dataset.datasets:
+                    d.img_resize = size
+            if self.trainer.val_dataloaders is not None:
+                for d in self.trainer.val_dataloaders.dataset.datasets:
+                    d.img_resize = size

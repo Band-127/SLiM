@@ -186,7 +186,7 @@ class DualMultiScaleSinePositionalEncoding(nn.Module):
                     hw_pos_emb_cropped.unsqueeze(0),
                     scale_factor=(scales[i], scales[i]),
                     mode="bilinear",
-                    align_corners=True,
+                    align_corners=False,
                 ).squeeze(0)
 
                 self.register_buffer(

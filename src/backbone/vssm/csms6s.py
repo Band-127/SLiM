@@ -10,8 +10,8 @@ try:
     import selective_scan_cuda_oflex
 except ImportError:
     WITH_SELECTIVESCAN_OFLEX = False
-    # warnings.warn("Can not import selective_scan_cuda_oflex. This affects speed.")
-    # print("Can not import selective_scan_cuda_oflex. This affects speed.", flush=True)
+    warnings.warn("Can not import selective_scan_cuda_oflex. This affects speed.")
+    print("Can not import selective_scan_cuda_oflex. This affects speed.", flush=True)
 try:
     import selective_scan_cuda_core
 except ImportError:

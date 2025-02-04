@@ -27,7 +27,6 @@ def relative_pose_error(T_0to1, R, t, ignore_gt_t_thr=0.0):
 
     return t_err, R_err
 
-
 def symmetric_epipolar_distance(pts0, pts1, E, K0, K1):
     """Squared symmetric epipolar distance.
     This can be seen as a biased estimation of the reprojection error.
@@ -84,7 +83,7 @@ def estimate_pose(kpts0, kpts1, K0, K1, thresh, conf=0.99999):
     kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
 
     # normalize ransac threshold
-    ransac_thr = thresh / np.mean([K0[0, 0], K0[1, 1], K1[0, 0], K1[1, 1]])
+    ransac_thr = thresh / np.mean([K0[0, 0], K1[1, 1], K0[0, 0], K1[1, 1]])
 
     # compute pose with cv2
     E, mask = cv2.findEssentialMat(
@@ -128,46 +127,47 @@ def compute_pose_errors(data, config):
 
     for bs in range(K0.shape[0]):
         mask = m_bids == bs
-        ret = estimate_pose(
-            pts0[mask], pts1[mask], K0[bs], K1[bs], pixel_thr, conf=conf
-        )
+        if config.TRAINER.RANSAC_TIMES == 1:
+            ret = estimate_pose(
+                pts0[mask], pts1[mask], K0[bs], K1[bs], pixel_thr, conf=conf
+            )
 
-        if ret is None:
-            data["R_errs"].append(np.inf)
-            data["t_errs"].append(np.inf)
-            data["inliers"].append(np.array([]).astype(np.bool_))
+            if ret is None:
+                data["R_errs"].append(np.inf)
+                data["t_errs"].append(np.inf)
+                data["inliers"].append(np.array([]).astype(np.bool_))
+            else:
+                R, t, inliers = ret
+                t_err, R_err = relative_pose_error(T_0to1[bs], R, t, ignore_gt_t_thr=0.0)
+                data["R_errs"].append(R_err)
+                data["t_errs"].append(t_err)
+                data["inliers"].append(inliers)
         else:
-            R, t, inliers = ret
-            t_err, R_err = relative_pose_error(T_0to1[bs], R, t, ignore_gt_t_thr=0.0)
-            data["R_errs"].append(R_err)
-            data["t_errs"].append(t_err)
-            data["inliers"].append(inliers)
+            bpts_0 = pts0[mask]
+            bpts_1 = pts1[mask]
+            for _ in range(config.TRAINER.RANSAC_TIMES):
+                shuffling = np.random.permutation(np.arange(len(bpts_0)))
+                ret = estimate_pose(
+                    bpts_0[shuffling],
+                    bpts_1[shuffling],
+                    K0[bs],
+                    K1[bs],
+                    pixel_thr,
+                    conf=conf,
+                )
 
-        # bpts_0 = pts0[mask]
-        # bpts_1 = pts1[mask]
-        # for _ in range(config.TRAINER.RANSAC_TIMES):
-        #     shuffling = np.random.permutation(np.arange(len(bpts_0)))
-        #     ret = estimate_pose(
-        #         bpts_0[shuffling],
-        #         bpts_1[shuffling],
-        #         K0[bs],
-        #         K1[bs],
-        #         pixel_thr,
-        #         conf=conf,
-        #     )
-
-        #     if ret is None:
-        #         data["R_errs"].append(np.inf)
-        #         data["t_errs"].append(np.inf)
-        #         data["inliers"].append(np.array([]).astype(np.bool_))
-        #     else:
-        #         R, t, inliers = ret
-        #         t_err, R_err = relative_pose_error(
-        #             T_0to1[bs], R, t, ignore_gt_t_thr=0.0
-        #         )
-        #         data["R_errs"].append(R_err)
-        #         data["t_errs"].append(t_err)
-        #         data["inliers"].append(inliers)
+                if ret is None:
+                    data["R_errs"].append(np.inf)
+                    data["t_errs"].append(np.inf)
+                    data["inliers"].append(np.array([]).astype(np.bool_))
+                else:
+                    R, t, inliers = ret
+                    t_err, R_err = relative_pose_error(
+                        T_0to1[bs], R, t, ignore_gt_t_thr=0.0
+                    )
+                    data["R_errs"].append(R_err)
+                    data["t_errs"].append(t_err)
+                    data["inliers"].append(inliers)
 
 
 # --- METRIC AGGREGATION ---
@@ -191,21 +191,6 @@ def error_auc(errors, thresholds):
         aucs.append(np.trapz(y, x) / thr)
 
     return {f"auc@{t}": auc for t, auc in zip(thresholds, aucs)}
-    # errors = np.array(errors)
-    # sort_idx = np.argsort(errors)
-    # errors = errors[sort_idx]
-    # recall = (np.arange(len(errors)) + 1) / len(errors)
-    # errors = np.r_[0., errors]
-    # recall = np.r_[0., recall]
-
-    # aucs = {}
-    # for thr in thresholds:
-    #     last_index = np.searchsorted(errors, thr)
-    #     y = np.r_[recall[:last_index], recall[last_index-1]]
-    #     x = np.r_[errors[:last_index], thr]
-    #     aucs[f"auc@{thr}"] = np.trapz(y, x=x) / thr
-
-    # return aucs
 
 
 def epidist_prec(errors, thresholds, ret_dict=False):

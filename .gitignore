@@ -1,6 +1,5 @@
 *.log
 *.ckpt
-data/
 __pycache__/
 .vscode/
 dump/*

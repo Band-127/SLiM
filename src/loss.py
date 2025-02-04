@@ -15,6 +15,7 @@ class RCRM_Loss(nn.Module):
         self.config = config
         self.turn_off_conf_mask_loss = not self.config["CONF_MASK_DEPTH_REFINEMENT"]
         self.coarse_weight = self.config["COARSE_WEIGHT"]
+        self.coarse_percent = self.config["COARSE_PERCENT"]
         self.intermediate_weight = self.config["INTERMEDIATE_WEIGHT"]
         self.fine_weight = self.config["FINE_WEIGHT"]
         self.iter_decay_gamma = self.config["ITER_DECAY_GAMMA"]
@@ -29,32 +30,77 @@ class RCRM_Loss(nn.Module):
         }[self.fine_type]
 
     def compute_coarse_loss(self, data):
-        conf = data["conf_matrix"]
+        conf = data["sim_matrix"]
         conf_gt = data["conf_matrix_gt"]
+        gamma = self.coarse_gamma
 
         # 0. Compute element-wise loss weight and pos neg mask
         weight = self._compute_c_weight(data)
-        pos_mask = conf_gt == 1
         # corner case: no gt coarse-level match at all
-        if not pos_mask.any():  # assign a wrong gt
+        if not conf_gt.any():  # assign a wrong gt
             conf_gt = conf
             loss = (conf - conf_gt).mean()
             return loss
 
-        # 1. Compute loss for similarity matrix in coarse matching
-        # Focal Loss
-        gamma = self.coarse_gamma
+        # 1. Get partial of all gt positive pairs
+        b_pos, i_pos, j_pos = torch.where(conf_gt == 1)
+        N = b_pos.shape[0]
+        actual_count = int(N * self.coarse_percent)
+        idx = torch.randperm(N, device=conf_gt.device)[:actual_count]
+        b_pos, i_pos, j_pos = b_pos[idx], i_pos[idx], j_pos[idx]
 
-        pos_conf = conf[pos_mask]
-        loss = (
-            -1 * torch.pow(1 - pos_conf, gamma) * torch.clamp_min(pos_conf, 1e-6).log()
-        )
+        # 2. Get the partial softmax
+        b_pos_unique, inversed_b = b_pos.unique(sorted=True, return_inverse=True)
+        i_pos_unique, inversed_i = i_pos.unique(sorted=True, return_inverse=True)
+        j_pos_unique, inversed_j = j_pos.unique(sorted=True, return_inverse=True)
+        loss = torch.zeros(inversed_i.shape[0], device=conf_gt.device)
+        for b in b_pos_unique:
+            row_pos = F.softmax(conf[b, i_pos_unique, :], 1)
+            col_pos = F.softmax(conf[b, :, j_pos_unique], 0)
+            pos_conf = (
+                row_pos[inversed_i, j_pos_unique[inversed_j]]
+                * col_pos[i_pos_unique[inversed_i], inversed_j]
+            )
+
+            loss[b_pos_unique[inversed_b] == b] = (
+                -1
+                * torch.pow(1 - pos_conf, gamma)
+                * torch.clamp_min(pos_conf, 1e-6).log()
+            )
+
+        # conf = data["conf_matrix"]
+        # conf_gt = data["conf_matrix_f"]
+
+        # # 0. Compute element-wise loss weight and pos neg mask
+        # weight = self._compute_c_weight(data)
+        # pos_mask = conf_gt == 1
+        # # corner case: no gt coarse-level match at all
+        # if not pos_mask.any():  # assign a wrong gt
+        #     conf_gt = conf
+        #     loss = (conf - conf_gt).mean()
+        #     return loss
+
+        # with torch.no_grad():
+        #     b, i, j = torch.where(conf_gt == 1)
+        #     N = b.shape[0]
+        #     actual_count = int(N * self.coarse_percent)
+        #     idx_set_zero = torch.randperm(N, device=conf_gt.device)[actual_count:]
+        #     pos_mask[b[idx_set_zero], i[idx_set_zero], j[idx_set_zero]] = 0
+
+        # # 1. Compute loss for similarity matrix in coarse matching
+        # # Focal Loss
+        # gamma = self.coarse_gamma
+
+        # pos_conf = conf[pos_mask]
+        # loss = (
+        #     -1 * torch.pow(1 - pos_conf, gamma) * torch.clamp_min(pos_conf, 1e-6).log()
+        # )
 
         # handle loss weights
         if weight is not None:
             # Different from dense-spvs, the loss w.r.t. padded regions aren't directly zeroed out,
             # but only through manually setting corresponding regions in sim_matrix to '-inf'.
-            loss = loss * weight[pos_mask]
+            loss = loss * weight[b_pos, i_pos, j_pos]
         loss = loss.mean()
 
         # 2. Compute loss for confidence mask with gt depth map(binary classification for background/foreground)
@@ -146,7 +192,7 @@ class RCRM_Loss(nn.Module):
 
         return 0.5 * loss
 
-    @torch.no_grad()
+    @torch.no_grad
     def _compute_c_weight(self, data):
         if "mask0" in data:
             # Mask the area on similarity matrix where the mask==False
@@ -168,13 +214,13 @@ class RCRM_Loss(nn.Module):
         """
         loss_scalars = {}
         # Get conf matrix from sim matrix using dual softmax operator
-        sim_matrix = data["sim_matrix"]
+        # sim_matrix = data["sim_matrix"]
         sim_matrix_f = data["sim_matrix_f"]
-        conf_matrix = F.softmax(sim_matrix, 1) * F.softmax(sim_matrix, 2)
+        # conf_matrix = F.softmax(sim_matrix, 1) * F.softmax(sim_matrix, 2)
         conf_matrix_f = F.softmax(sim_matrix_f, 1) * F.softmax(sim_matrix_f, 2)
-        data.update({"conf_matrix": conf_matrix})
+        # data.update({"conf_matrix": conf_matrix})
         data.update({"conf_matrix_f": conf_matrix_f})
-        loss = torch.tensor(0.0, device=sim_matrix.device)
+        loss = torch.tensor(0.0, device=conf_matrix_f.device)
 
         # 1. Coarse-level loss
         loss_c = self.compute_coarse_loss(data)

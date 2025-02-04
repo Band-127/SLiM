@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from typing import Tuple
+from typing import Tuple, Sequence
 from collections import OrderedDict
 from timm.models.layers import trunc_normal_, DropPath
 
@@ -37,7 +37,10 @@ class CoarseEncoder(nn.Module):
         self.convs = nn.ModuleList(
             [
                 InceptionNeXt(
-                    in_output_dim=self.in_output_dim, kernel_size=7, split_ratio=8
+                    in_output_dim=self.in_output_dim,
+                    kernel_size=7,
+                    split_ratio=8,
+                    aggregation_size=4,
                 )
                 for _ in range(num_layers)
             ]
@@ -50,6 +53,7 @@ class CoarseEncoder(nn.Module):
                     conv_dim=self.conv_dim,
                     delta=self.delta,
                     using_mamba2=self.using_mamba2,
+                    aggregation_size=4,
                 )
                 for _ in range(num_layers)
             ]
@@ -69,13 +73,13 @@ class CoarseEncoder(nn.Module):
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
 
-    @torch.no_grad()
-    def initial_forward(self, size: int, batch_size: int):
+    @torch.no_grad
+    def initial_forward(self, size: Sequence[int], batch_size: int):
         for i in range(5):
-            random_data_0 = torch.randn(batch_size, self.in_output_dim, size, size).to(
+            random_data_0 = torch.randn(batch_size, self.in_output_dim, size[0], size[1]).to(
                 self.mambas[0].mamba.mamba_forward.mamba_layer.in_proj.weight.device
             )
-            random_data_1 = torch.randn(batch_size, self.in_output_dim, size, size).to(
+            random_data_1 = torch.randn(batch_size, self.in_output_dim, size[0], size[1]).to(
                 self.mambas[0].mamba.mamba_forward.mamba_layer.in_proj.weight.device
             )
             _ = self.forward(random_data_0, random_data_1)

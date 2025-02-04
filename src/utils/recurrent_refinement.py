@@ -7,7 +7,7 @@ from collections import OrderedDict
 from einops.einops import rearrange
 from timm.models.layers import trunc_normal_
 
-from src.utils.misc import LayerNorm2d
+from src.utils.misc import LayerNorm2d, Alpha
 
 
 class ConvGRU(nn.Module):
@@ -41,14 +41,13 @@ class ConvContextBlock(nn.Module):
         self.kernel_size = kernel_size
         self.padding = kernel_size // 2
 
-        # DConv+MLP
+        # Conv+MLP
         self.dwconv_mlp = nn.Sequential(
             nn.Conv2d(
                 input_dim,
                 input_dim,
                 kernel_size=self.kernel_size,
                 padding=self.padding,
-                groups=input_dim,
             ),
             LayerNorm2d(input_dim),
             nn.Conv2d(input_dim, 2 * output_dim, kernel_size=1),
@@ -76,36 +75,20 @@ class RecurrentRefinementUnit(nn.Module):
         self.context = context
 
         # Feat -> flow feature encoder
-        # self.flow_encoder = nn.Sequential(
-        #     nn.Conv2d(
-        #         int(self.lookup_window_size**2) + self.input_dim,
-        #         self.hidden_dim + self.input_dim,
-        #         kernel_size=3,
-        #         padding=1,
-        #     ),
-        #     LayerNorm2d(self.hidden_dim + self.input_dim),
-        #     nn.GELU(approximate="tanh"),
-        #     nn.Conv2d(
-        #         self.hidden_dim + self.input_dim,
-        #         self.hidden_dim,
-        #         kernel_size=5,
-        #         padding=2,
-        #     ),
-        # )
         self.flow_encoder = (
             nn.Sequential(
-                LayerNorm2d(2 * self.input_dim),
                 nn.Conv2d(
                     2 * self.input_dim,
                     2 * self.input_dim,
-                    kernel_size=5,
-                    padding=2,
+                    kernel_size=7,
+                    padding=3,
                 ),
                 nn.Conv2d(
                     2 * self.input_dim,
                     2 * self.hidden_dim,
                     kernel_size=1,
                 ),
+                LayerNorm2d(2 * self.hidden_dim),
                 nn.GELU(approximate="tanh"),
                 nn.Conv2d(
                     2 * self.hidden_dim,
@@ -153,7 +136,6 @@ class RecurrentRefinementUnit(nn.Module):
                 elif isinstance(m, nn.LayerNorm):
                     nn.init.constant_(m.weight, 1)
                     nn.init.constant_(m.bias, 0)
-
             nn.init.constant_(self.conv_offset[-1].weight, 0.001)
 
     def forward(
@@ -196,11 +178,12 @@ class RecurrentRefinementUnit(nn.Module):
 
         # Offset
         spatial_expectation = (
-            dsnt.spatial_expectation2d(corr[None], True)[0] * self.output_gamma
+            dsnt.spatial_expectation2d(corr[None], True)[0]
         )  # M, 2
 
         return spatial_expectation, hidden_state
         """
+        
 
         # Input Encoding
         feat = torch.cat([feat0_window, feat1_window], dim=1)  # (M, 2*C, H, W)
@@ -222,7 +205,7 @@ class RecurrentRefinementUnit(nn.Module):
 
         return offset, hidden_state
 
-    @torch.no_grad()
+    @torch.no_grad
     def initial_forward(self):
         for i in range(5):
             feat0_window = torch.randn(10000, self.input_dim, 6, 6).to(

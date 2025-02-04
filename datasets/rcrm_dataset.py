@@ -1,4 +1,5 @@
 import os.path as osp
+from typing import Sequence
 from tqdm import tqdm
 from yacs.config import CfgNode as CN
 from torch.utils.data import (
@@ -23,9 +24,12 @@ class RCRM_Dataset(pl.LightningDataModule):
         self.seed = config.GLOBAL_SEED
         self.device_enable_ddp = config.DEVICE.ENABLE_DDP
         self.parallel_workers_num = config.DATASET.PARALLEL_WORKERS_NUM
+        self.data_source = None
         ## train and val
         if self.mode == "train":
-            self.data_source = config.DATASET.TRAINVAL_DATA_SOURCE
+            self.data_source = self.train_data_source = (
+                config.DATASET.TRAINVAL_DATA_SOURCE
+            )
             self.train_data_root = config.DATASET.TRAIN_DATA_ROOT
             self.train_npz_dir = config.DATASET.TRAIN_NPZ_ROOT
             self.train_list_path = config.DATASET.TRAIN_LIST_PATH
@@ -37,7 +41,7 @@ class RCRM_Dataset(pl.LightningDataModule):
             self.min_overlap_score = config.DATASET.MIN_OVERLAP_SCORE_TRAIN
         ## test
         else:
-            self.data_source = config.DATASET.TEST_DATA_SOURCE
+            self.data_source = self.test_data_source = config.DATASET.TEST_DATA_SOURCE
             self.test_data_root = config.DATASET.TEST_DATA_ROOT
             self.test_npz_dir = config.DATASET.TEST_NPZ_ROOT
             self.test_list_path = config.DATASET.TEST_LIST_PATH
@@ -95,7 +99,8 @@ class RCRM_Dataset(pl.LightningDataModule):
             ## train
             datasets = []
             for npz_name in tqdm(
-                self.train_npz_names, desc="Loading megadepth dataset for training"
+                self.train_npz_names,
+                desc=f"Loading {self.data_source} dataset for training",
             ):
                 npz_path = osp.join(self.train_npz_dir, npz_name)
                 ### Megadepth
@@ -130,7 +135,8 @@ class RCRM_Dataset(pl.LightningDataModule):
             ## val
             datasets = []
             for npz_name in tqdm(
-                self.val_npz_names, desc="Loading megadepth dataset for validating"
+                self.val_npz_names,
+                desc=f"Loading {self.data_source} dataset for validating",
             ):
                 npz_path = osp.join(self.val_npz_dir, npz_name)
                 ### Megadepth
@@ -164,7 +170,8 @@ class RCRM_Dataset(pl.LightningDataModule):
         else:
             datasets = []
             for npz_name in tqdm(
-                self.test_npz_names, desc="Loading megadepth dataset for testing"
+                self.test_npz_names,
+                desc=f"Loading {self.data_source} dataset for testing",
             ):
                 npz_path = osp.join(self.test_npz_dir, npz_name)
                 ## Megadepth

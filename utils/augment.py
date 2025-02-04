@@ -83,14 +83,11 @@ class MAFFLiteAug(object):
             [
                 A.ColorJitter(
                     p=0.2,
-                    brightness=0.2,
-                    contrast=0.2,
-                    saturation=0.2,
-                    hue=0.5,
+                    brightness=0.15,
+                    contrast=0.15,
+                    saturation=0.15,
+                    hue=0.25,
                 ),
-                A.RandomRain(p=0.05),
-                A.RandomSunFlare(p=0.05),
-                A.Blur(p=0.1, blur_limit=(3, 9)),
                 A.ImageCompression(p=0.1, quality_lower=60, quality_upper=80),
                 A.ISONoise(p=0.1),
             ]

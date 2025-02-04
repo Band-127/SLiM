@@ -275,7 +275,7 @@ class VMamba_Feature_Extractor_with_FPN(nn.Module):
 
         for i in range(len(features_0) - 2, -1, -1):
             higher_feature = F.interpolate(
-                fpn_features_0[0], scale_factor=2, mode="bilinear", align_corners=True
+                fpn_features_0[0], scale_factor=2, mode="bilinear", align_corners=False
             )
             current_feature = self.lateral_convs[i](features_0[i])
             fused_feature = self.output_convs[i](higher_feature + current_feature)
@@ -286,7 +286,7 @@ class VMamba_Feature_Extractor_with_FPN(nn.Module):
 
         for i in range(len(features_1) - 2, -1, -1):
             higher_feature = F.interpolate(
-                fpn_features_1[0], scale_factor=2, mode="bilinear", align_corners=True
+                fpn_features_1[0], scale_factor=2, mode="bilinear", align_corners=False
             )
             current_feature = self.lateral_convs[i](features_1[i])
             fused_feature = self.output_convs[i](higher_feature + current_feature)
@@ -346,6 +346,7 @@ class VMamba_Feature_Extractor_cropped(nn.Module):
         # patch embed
         x = self.conv1to3(x)
         x = self.backbone.patch_embed(x)
+        features.append(self.pixel_shuffle(x))
         # pos embed
         if self.backbone.pos_embed is not None:
             pos_embed = (
@@ -354,7 +355,6 @@ class VMamba_Feature_Extractor_cropped(nn.Module):
                 else self.backbone.pos_embed
             )
             x = x + pos_embed
-        features.append(self.pixel_shuffle(x))
         # forward
         for layer in self.backbone.layers:
             x = layer.blocks(x)
@@ -418,6 +418,8 @@ class VMamba_Feature_Extractor_cropped_concat(nn.Module):
         # patch embed
         x0, x1 = self.conv1to3(x0), self.conv1to3(x1)
         x0, x1 = self.backbone.patch_embed(x0), self.backbone.patch_embed(x1)
+        features_0.append(self.pixel_shuffle(x0))
+        features_1.append(self.pixel_shuffle(x1))
         # pos embed
         if self.backbone.pos_embed is not None:
             pos_embed = (
@@ -427,8 +429,6 @@ class VMamba_Feature_Extractor_cropped_concat(nn.Module):
             )
             x0 = x0 + pos_embed
             x1 = x1 + pos_embed
-        features_0.append(self.pixel_shuffle(x0))
-        features_1.append(self.pixel_shuffle(x1))
 
         x = torch.concat([x0, x1], dim=-1)  # Concat in W channel
         # forward
@@ -437,7 +437,6 @@ class VMamba_Feature_Extractor_cropped_concat(nn.Module):
             features.append(x)
             x = layer.downsample(x)
         # Split into two features
-
         for feature in features:
             # Assuming the feature maps are concatenated along the width dimension
             feature_0, feature_1 = torch.chunk(feature, 2, dim=-1)
@@ -579,7 +578,7 @@ class VMamba_Feature_Extractor_cropped_FPN(nn.Module):
 
         for i in range(len(features_0) - 2, -1, -1):
             higher_feature = F.interpolate(
-                fpn_features_0[0], scale_factor=2, mode="bilinear", align_corners=True
+                fpn_features_0[0], scale_factor=2, mode="bilinear", align_corners=False
             )
             current_feature = self.lateral_convs[i](features_0[i])
             fused_feature = self.output_convs[i](higher_feature + current_feature)
@@ -590,7 +589,167 @@ class VMamba_Feature_Extractor_cropped_FPN(nn.Module):
 
         for i in range(len(features_1) - 2, -1, -1):
             higher_feature = F.interpolate(
-                fpn_features_1[0], scale_factor=2, mode="bilinear", align_corners=True
+                fpn_features_1[0], scale_factor=2, mode="bilinear", align_corners=False
+            )
+            current_feature = self.lateral_convs[i](features_1[i])
+            fused_feature = self.output_convs[i](higher_feature + current_feature)
+            fpn_features_1.insert(0, fused_feature)
+
+        return fpn_features_0, fpn_features_1
+
+    def flops(self, shape=(3, 224, 224), verbose=True):
+        return self.backbone.flops(shape, verbose)
+
+
+class VMamba_Feature_Extractor_cropped_concat_FPN(nn.Module):
+    def __init__(self, config):
+        super(VMamba_Feature_Extractor_cropped_concat_FPN, self).__init__()
+        if "VMamba_T" in config["BACKBONE_TYPE"]:
+            self.backbone = (
+                build_pretrained_VMamba_T(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_T(config)
+            )
+        elif "VMamba_S" in config["BACKBONE_TYPE"]:
+            self.backbone = (
+                build_pretrained_VMamba_S(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_S(config)
+            )
+        elif "VMamba_B" in config["BACKBONE_TYPE"]:
+            self.backbone = (
+                build_pretrained_VMamba_B(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_B(config)
+            )
+        else:  # Default to Tiny
+            self.backbone = (
+                build_pretrained_VMamba_T(config)
+                if config["VMAMBA_PRETRAINED"]
+                else build_VMamba_T(config)
+            )
+
+        # remove classifier and last two layer
+        del self.backbone.classifier
+        self.backbone.layers.pop(-1)
+        self.backbone.layers.pop(-1)
+        self.backbone.dims.pop(-1)
+        self.backbone.dims.pop(-1)
+
+        # Add a 1-channel grayscale to 3-channel grayscale conv
+        self.conv1to3 = conv1x1(1, 3)
+        with torch.no_grad():
+            nn.init.constant_(self.conv1to3.weight, 1.0)
+
+        # Add a pixel shuffle layer to extract 1/2 scale features
+        self.pixel_shuffle = nn.PixelShuffle(2)
+
+        # FPN
+        self.fpn_in_channels = [int(self.backbone.dims[0] // 4), *self.backbone.dims]
+        self.final_outconv = conv1x1(self.fpn_in_channels[-1], self.fpn_in_channels[-1])
+        self.lateral_convs = nn.ModuleList(
+            [
+                conv1x1(in_channels, self.fpn_in_channels[i + 1])
+                for i, in_channels in enumerate(self.fpn_in_channels[:-1])
+            ]
+        )
+        self.output_convs = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(
+                        self.fpn_in_channels[i + 1],
+                        self.fpn_in_channels[i + 1],
+                        kernel_size=3,
+                        padding=1,
+                        groups=self.fpn_in_channels[i + 1],
+                    ),
+                    LayerNorm2d(self.fpn_in_channels[i + 1]),
+                    nn.GELU(),
+                    nn.Conv2d(
+                        self.fpn_in_channels[i + 1],
+                        self.fpn_in_channels[i],
+                        kernel_size=1,
+                        padding=0,
+                    ),
+                )
+                for i in range(len(self.fpn_in_channels) - 1)
+            ]
+        )
+
+        # Initialization
+        with torch.no_grad():
+            for m in self.final_outconv.modules():
+                if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                    trunc_normal_(m.weight, std=0.02)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+            for m in self.lateral_convs.modules():
+                if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                    trunc_normal_(m.weight, std=0.02)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+            for m in self.output_convs.modules():
+                if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+                    trunc_normal_(m.weight, std=0.02)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+            for m in self.modules():
+                if isinstance(m, nn.LayerNorm):
+                    nn.init.constant_(m.weight, 1)
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x0, x1):
+        # Concatenate x0 and x1 along the batch dimension
+        features = []
+        features_0 = []
+        features_1 = []
+        # patch embed
+        x0, x1 = self.conv1to3(x0), self.conv1to3(x1)
+        x0, x1 = self.backbone.patch_embed(x0), self.backbone.patch_embed(x1)
+        features_0.append(self.pixel_shuffle(x0))
+        features_1.append(self.pixel_shuffle(x1))
+        # pos embed
+        if self.backbone.pos_embed is not None:
+            pos_embed = (
+                self.backbone.pos_embed.permute(0, 2, 3, 1)
+                if not self.backbone.channel_first
+                else self.backbone.pos_embed
+            )
+            x0 = x0 + pos_embed
+            x1 = x1 + pos_embed
+
+        x = torch.concat([x0, x1], dim=-1)  # Concat in W channel
+        # forward
+        for layer in self.backbone.layers:
+            x = layer.blocks(x)
+            features.append(x)
+            x = layer.downsample(x)
+
+        # Split into two features
+        for feature in features:
+            # Assuming the feature maps are concatenated along the width dimension
+            feature_0, feature_1 = torch.chunk(feature, 2, dim=-1)
+            features_0.append(feature_0)
+            features_1.append(feature_1)
+
+        # FPN 0
+        prev_features = self.final_outconv(features_0[-1])
+        fpn_features_0 = [prev_features]
+
+        for i in range(len(features_0) - 2, -1, -1):
+            higher_feature = F.interpolate(
+                fpn_features_0[0], scale_factor=2, mode="bilinear", align_corners=False
+            )
+            current_feature = self.lateral_convs[i](features_0[i])
+            fused_feature = self.output_convs[i](higher_feature + current_feature)
+            fpn_features_0.insert(0, fused_feature)
+        # FPN 1
+        prev_features = self.final_outconv(features_1[-1])
+        fpn_features_1 = [prev_features]
+
+        for i in range(len(features_1) - 2, -1, -1):
+            higher_feature = F.interpolate(
+                fpn_features_1[0], scale_factor=2, mode="bilinear", align_corners=False
             )
             current_feature = self.lateral_convs[i](features_1[i])
             fused_feature = self.output_convs[i](higher_feature + current_feature)

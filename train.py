@@ -1,5 +1,6 @@
 import math
 from pathlib import Path
+import torch
 import pytorch_lightning as pl
 from pytorch_lightning.tuner.tuning import Tuner
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -20,6 +21,7 @@ loguru_logger = get_rank_zero_only_logger(loguru_logger)
 def main():
     config = get_cfg_defaults()
     pl.seed_everything(config.GLOBAL_SEED)
+    torch.cuda.manual_seed_all(config.GLOBAL_SEED)
 
     # set train/test
     config.OVERALL_MODE = "train"
@@ -63,7 +65,7 @@ def main():
 
     # Callbacks
     ckpt_callback = ModelCheckpoint(
-        monitor="auc@20",
+        monitor="auc@5",
         verbose=True,
         save_top_k=5,
         mode="max",

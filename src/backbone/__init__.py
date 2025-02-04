@@ -8,6 +8,7 @@ from .vssm import (
     VMamba_Feature_Extractor_modified,
     VMamba_Feature_Extractor_cropped_FPN,
     VMamba_Feature_Extractor_cropped_concat,
+    VMamba_Feature_Extractor_cropped_concat_FPN,
 )
 from .repvgg import (
     RepVGG_Feature_Extractor,
@@ -15,6 +16,7 @@ from .repvgg import (
     RepVGG_Feature_Extractor_cropped,
     RepVGG_Feature_Extractor_pretrained_cropped,
 )
+from .convvmamba import ConvVMamba
 
 
 def build_backbone(config):
@@ -68,6 +70,10 @@ def build_backbone(config):
         return VMamba_Feature_Extractor_cropped_FPN(config=config)
     elif config["BACKBONE_TYPE"] == "VMamba_T_cropped_concat":
         return VMamba_Feature_Extractor_cropped_concat(config=config)
+    elif config["BACKBONE_TYPE"] == "VMamba_T_cropped_concat_FPN":
+        return VMamba_Feature_Extractor_cropped_concat_FPN(config=config)
+    elif config["BACKBONE_TYPE"] == "ConvVMamba":
+        return ConvVMamba(config=config)
     # RepVGG
     elif (
         config["BACKBONE_TYPE"] == "RepVGG"

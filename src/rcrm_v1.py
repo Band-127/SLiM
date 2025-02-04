@@ -11,7 +11,7 @@ from src.utils.channel_alignment import ChannelAlignment
 from src.utils.conf_head import ConfHead
 from src.utils.any_input_identity import AnyInputIdentity
 from src.utils.coarse_encoder import CoarseEncoder
-from src.utils.fine_encoder import FineEncoder_conv
+from src.utils.fine_encoder import FineEncoder_conv, FineEncoder_upsample
 from src.utils.recurrent_refinement import RecurrentRefinementUnit
 from src.utils.cross_pixel_refinement import CrossPixelRefinement
 from src.utils.misc import create_grid
@@ -30,6 +30,9 @@ class RCRM_v1(nn.Module):
         self.config = config
 
         self.dtype = getattr(torch, config["DTYPE"])
+        self.input_size = self.config["BACKBONE"][
+            "INPUT_SIZE"
+        ]  # For initial forward only
         self.d_model = config["DIMENSION"]
         self.d_fine = config["FINE_DIMENSION"]
         self.refine_iters = int(config["REFINE_ITERS"])
@@ -37,7 +40,10 @@ class RCRM_v1(nn.Module):
         self.coarse_scale_idx = config["COARSE_SCALE_IDX"]
         self.fine_scale_idx = config["FINE_SCALE_IDX"]
         self.coarse_scale = config["COARSE_SCALE"]
-        self.fine_scale = config["FINE_SCALE"]
+        # EDITED!!!
+        # self.fine_scale = config["FINE_SCALE"]
+        self.fine_scale = 1
+        # EDITED!!!
         self.coarse_match_thres = config["COARSE_MATCHING"]["THRESHOLD"]
         self.intermediate_match_thres = config["INTERMEDIATE_MATCHING"]["THRESHOLD"]
         self.max_coarse_matches = config["COARSE_MATCHING"]["MAX_MATCHES"]
@@ -55,31 +61,7 @@ class RCRM_v1(nn.Module):
         # 1. Pyramid feature backbone
         self.feature_backbone = build_backbone(config["BACKBONE"])
 
-        # # 2. Feature channel alignment
-        # self.feature_channel_alignment = (
-        #     ChannelAlignment(
-        #         d_model_input=config["BACKBONE"]["LAYER_DIMS"],
-        #         d_model_output=self.d_model,
-        #         dtype=self.dtype,
-        #     )
-        #     if "FPN" not in config["BACKBONE"]["BACKBONE_TYPE"]
-        #     else nn.Identity()
-        # )
-
-        # 3. PE
-        self.pe = (
-            DualMultiScaleSinePositionalEncoding(
-                max_d_model=self.d_model,
-                d_model=config["BACKBONE"]["LAYER_DIMS"],
-                max_hw=config["BACKBONE"]["INPUT_SIZE"],
-                scales=[1 / i for i in config["BACKBONE"]["RESOLUTION"]],
-                dtype=self.dtype,
-            )
-            if not self.disable_pe
-            else AnyInputIdentity()
-        )
-
-        # 4. Coarse encoder
+        # 2. Coarse encoder
         self.coarse_encoder = (
             CoarseEncoder(
                 in_output_dim=config["BACKBONE"]["LAYER_DIMS"][self.coarse_scale_idx],
@@ -94,22 +76,24 @@ class RCRM_v1(nn.Module):
             else AnyInputIdentity()
         )
 
-        # 5. Confidence score mask head, used to generate confidence/saliency score for coarse matching
-        # self.conf_mask_head = ConfHead(self.d_model)
-
-        # 6. Fine encoder
-        self.fine_encoder = (
-            FineEncoder_conv(
-                input_dim=config["BACKBONE"]["LAYER_DIMS"][self.fine_scale_idx],
-                output_dim=self.d_fine,
-                num_layers=config["FINE_ENCODER"]["NUM_LAYERS"],
-                drop_rate=config["FINE_ENCODER"]["DROP_RATE"],
-            )
-            if config["FINE_ENCODER"]["NUM_LAYERS"] > 0
-            else nn.Identity()
+        # EDITED!!!
+        # 3. Fine encoder
+        # self.fine_encoder = (
+        #     FineEncoder_conv(
+        #         input_dim=config["BACKBONE"]["LAYER_DIMS"][self.fine_scale_idx],
+        #         output_dim=self.d_fine,
+        #         num_layers=config["FINE_ENCODER"]["NUM_LAYERS"],
+        #         drop_rate=config["FINE_ENCODER"]["DROP_RATE"],
+        #     )
+        #     if config["FINE_ENCODER"]["NUM_LAYERS"] > 0
+        #     else nn.Identity()
+        # )
+        self.fine_encoder = FineEncoder_upsample(
+            dim=config["BACKBONE"]["LAYER_DIMS"][self.fine_scale_idx]
         )
+        # EDITED!!!
 
-        # 7. Recurrent Refinement Unit
+        # 4. Recurrent Refinement Unit
         self.recurrent_refine_unit = RecurrentRefinementUnit(
             input_dim=self.d_fine,
             hidden_dim=config["REFINEMENT"]["HIDDEN_DIM"],
@@ -155,8 +139,6 @@ class RCRM_v1(nn.Module):
                 "feat1_c": (torch.Tensor): (B, C, Hc1, Wc1): coarse feature 1
                 "hw0_c": (torch.Size): Hc0, Wc0: coarse feature shape 0
                 "hw1_c": (torch.Size): Hc1, Wc1: coarse feature shape 1
-                "conf_mask0": (torch.Tensor): (B, Lc0) coarse confidence mask, used to refine coarse match in similarity matrix
-                "conf_mask1": (torch.Tensor): (B, Lc1) coarse confidence mask, used to refine coarse match in similarity matrix
                 "feat0_f": (torch.Tensor): (B, C, Hf0, Wf0): fine feature 0
                 "feat1_f": (torch.Tensor): (B, C, Hf1, Wf1): fine feature 1
                 "hw0_f": (torch.Size): Hf0, Wf0: fine feature shape 0
@@ -171,7 +153,6 @@ class RCRM_v1(nn.Module):
                 "coarse_coord_1": (torch.Tensor): (M, 2) coarse matched coords in image 1, in absolute coordinate, top left corner(for easy indexing)
 
                 "sim_matrix_f": (torch.Tensor): (M, Lf0, Lf1) fine similarity matrix formed before fine matching
-
                 "b_idx_it": (torch.Tensor): (N) intermediate match index, in B
                 "m_idx_it": (torch.Tensor): (N) intermediate match index, in M
                 "i_idx_it": (torch.Tensor): (N) intermediate match index, in image 0
@@ -209,7 +190,7 @@ class RCRM_v1(nn.Module):
         else:
             return self._forward_test(data)
 
-    @torch.no_grad()
+    @torch.no_grad
     def _forward_test(self, data: dict):
         start_time = time.perf_counter()
         # 1. Feature extraction
@@ -226,30 +207,21 @@ class RCRM_v1(nn.Module):
         )  # Flattened, [B x L]
         feat_extraxt_end_time = time.perf_counter()
 
-        # # 2. Feature channel alignment, align the channel dim of features
-        # x0, x1 = (
-        #     self.feature_channel_alignment(x0),
-        #     self.feature_channel_alignment(x1),
-        # )  # S, [B x C x H x W]
+        # 2. Coarse encoder
+        coarse_x0, coarse_x1 = x0[self.coarse_scale_idx], x1[self.coarse_scale_idx] = (
+            self.coarse_encoder(x0[self.coarse_scale_idx], x1[self.coarse_scale_idx])
+        )
+        coarse_end_time = time.perf_counter()
 
-        # 2. PE
-        x0, x1 = self.pe(x0, x1)  # S x [B x C x H x W]
+        # 2.5 FPN before fine encoder
+        if hasattr(self.feature_backbone, "fpn"):
+            x0, x1 = self.feature_backbone.fpn(x0, x1)
 
         # 3. Fine Encoder
         fine_0, fine_1 = self.fine_encoder(
             x0[self.fine_scale_idx], x1[self.fine_scale_idx]
         )
         fine_end_time = time.perf_counter()
-
-        # 4. Coarse encoder
-        coarse_x0, coarse_x1 = x0[self.coarse_scale_idx], x1[self.coarse_scale_idx] = (
-            self.coarse_encoder(x0[self.coarse_scale_idx], x1[self.coarse_scale_idx])
-        )
-
-        # 5. Conf score mask generation
-        # conf_mask0 = self.conf_mask_head(coarse_x0)
-        # conf_mask1 = self.conf_mask_head(coarse_x1)
-        coarse_end_time = time.perf_counter()
 
         # Update features, shapes and conf mask
         data.update(
@@ -258,8 +230,6 @@ class RCRM_v1(nn.Module):
                 "feat1_c": coarse_x1,  # B, C, Hc1, Wc1
                 "hw0_c": coarse_x0.shape[2:],
                 "hw1_c": coarse_x1.shape[2:],
-                # "conf_mask0": conf_mask0,
-                # "conf_mask1": conf_mask1,
                 "feat0_f": fine_0,  # B, C, Hf0, Wf0
                 "feat1_f": fine_1,  # B, C, Hf1, Wf1
                 "hw0_f": fine_0.shape[2:],
@@ -267,25 +237,23 @@ class RCRM_v1(nn.Module):
             }
         )
 
-        # 6. Coarse matching
+        # 4. Coarse matching
         self._coarse_correlation(
             data=data,
             feat0_c=coarse_x0,
             feat1_c=coarse_x1,
             mask0=mask0,
             mask1=mask1,
-            # conf_mask0=conf_mask0,
-            # conf_mask1=conf_mask1,
         )  # (B x HW x HW)
         self._get_coarse_coord_test(data=data)  # Get coord from sim matrix
         coarse_correlation_end_time = time.perf_counter()
 
-        # 7. Intermediate matching
+        # 5. Intermediate matching
         self._fine_correlation(data=data)
         self._get_intermediate_coord_test(data=data)
         inter_correlation_end_time = time.perf_counter()
 
-        # 8. Reccurent refinement for coordinates
+        # 6. Reccurent refinement for coordinates
         self._fine_matching(data=data)
         refine_end_time = time.perf_counter()
 
@@ -293,12 +261,10 @@ class RCRM_v1(nn.Module):
             {
                 "feat_extract_time": (feat_extraxt_end_time - start_time)
                 / data["batch_size"],
-                "fine_time": (fine_end_time - feat_extraxt_end_time)
+                "coarse_time": (coarse_end_time - feat_extraxt_end_time)
                 / data["batch_size"],
-                "coarse_time": (coarse_end_time - fine_end_time) / data["batch_size"],
-                "coarse_correlation_time": (
-                    coarse_correlation_end_time - coarse_end_time
-                )
+                "fine_time": (fine_end_time - coarse_end_time) / data["batch_size"],
+                "coarse_correlation_time": (coarse_correlation_end_time - fine_end_time)
                 / data["batch_size"],
                 "inter_correlation_time": (
                     inter_correlation_end_time - coarse_correlation_end_time
@@ -325,30 +291,21 @@ class RCRM_v1(nn.Module):
         )  # Flattened, [B x L]
         feat_extraxt_end_time = time.perf_counter()
 
-        # # 2. Feature channel alignment, align the channel dim of features
-        # x0, x1 = (
-        #     self.feature_channel_alignment(x0),
-        #     self.feature_channel_alignment(x1),
-        # )  # S, [B x C x H x W]
+        # 2. Coarse encoder
+        coarse_x0, coarse_x1 = x0[self.coarse_scale_idx], x1[self.coarse_scale_idx] = (
+            self.coarse_encoder(x0[self.coarse_scale_idx], x1[self.coarse_scale_idx])
+        )
+        coarse_end_time = time.perf_counter()
 
-        # 2. PE
-        x0, x1 = self.pe(x0, x1)  # S x [B x C x H x W]
+        # 2.5 FPN before fine encoder
+        if hasattr(self.feature_backbone, "fpn"):
+            x0, x1 = self.feature_backbone.fpn(x0, x1)
 
         # 3. Fine Encoder
         fine_0, fine_1 = self.fine_encoder(
             x0[self.fine_scale_idx], x1[self.fine_scale_idx]
         )
         fine_end_time = time.perf_counter()
-
-        # 4. Coarse encoder
-        coarse_x0, coarse_x1 = x0[self.coarse_scale_idx], x1[self.coarse_scale_idx] = (
-            self.coarse_encoder(x0[self.coarse_scale_idx], x1[self.coarse_scale_idx])
-        )
-
-        # 5. Conf score mask generation
-        # conf_mask0 = self.conf_mask_head(coarse_x0)
-        # conf_mask1 = self.conf_mask_head(coarse_x1)
-        coarse_end_time = time.perf_counter()
 
         # Update features, shapes and conf mask
         data.update(
@@ -357,8 +314,6 @@ class RCRM_v1(nn.Module):
                 "feat1_c": coarse_x1,  # B, C, Hc1, Wc1
                 "hw0_c": coarse_x0.shape[2:],
                 "hw1_c": coarse_x1.shape[2:],
-                # "conf_mask0": conf_mask0,
-                # "conf_mask1": conf_mask1,
                 "feat0_f": fine_0,  # B, C, Hf0, Wf0
                 "feat1_f": fine_1,  # B, C, Hf1, Wf1
                 "hw0_f": fine_0.shape[2:],
@@ -366,25 +321,23 @@ class RCRM_v1(nn.Module):
             }
         )
 
-        # 6. Coarse matching
+        # 4. Coarse matching
         self._coarse_correlation(
             data=data,
             feat0_c=coarse_x0,
             feat1_c=coarse_x1,
             mask0=mask0,
             mask1=mask1,
-            # conf_mask0=conf_mask0,
-            # conf_mask1=conf_mask1,
         )  # (B x HW x HW)
         self._get_coarse_coord_train(data=data)  # Get all coord from gt
         coarse_correlation_end_time = time.perf_counter()
 
-        # 7. Intermediate matching
+        # 5. Intermediate matching
         self._fine_correlation(data=data)
         self._get_intermediate_coord_train(data=data)
         inter_correlation_end_time = time.perf_counter()
 
-        # 8. Reccurent refinement for coordinates
+        # 6. Reccurent refinement for coordinates
         self._fine_matching(data=data)
         refine_end_time = time.perf_counter()
 
@@ -392,12 +345,10 @@ class RCRM_v1(nn.Module):
             {
                 "feat_extract_time": (feat_extraxt_end_time - start_time)
                 / data["batch_size"],
-                "fine_time": (fine_end_time - feat_extraxt_end_time)
+                "coarse_time": (coarse_end_time - feat_extraxt_end_time)
                 / data["batch_size"],
-                "coarse_time": (coarse_end_time - fine_end_time) / data["batch_size"],
-                "coarse_correlation_time": (
-                    coarse_correlation_end_time - coarse_end_time
-                )
+                "fine_time": (fine_end_time - coarse_end_time) / data["batch_size"],
+                "coarse_correlation_time": (coarse_correlation_end_time - fine_end_time)
                 / data["batch_size"],
                 "inter_correlation_time": (
                     inter_correlation_end_time - coarse_correlation_end_time
@@ -423,6 +374,7 @@ class RCRM_v1(nn.Module):
         print(
             f"Initial memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
         )
+        # 1. Feature extraction
         with Timer("Feature extraction"):
             x0, x1 = self.feature_backbone(
                 data["image0"], data["image1"]
@@ -435,29 +387,11 @@ class RCRM_v1(nn.Module):
                 if "mask0" in data
                 else (None, None)
             )  # Flattened, [B x L]
-
-        # # 2. Feature channel alignment, align the channel dim of features
-        # x0, x1 = (
-        #     self.feature_channel_alignment(x0),
-        #     self.feature_channel_alignment(x1),
-        # )  # S, [B x C x H x W]
         print(
             f"Feature extract memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
         )
 
-        # 3. Fine Encoder
-        with Timer("Fine encoder"):
-            fine_0, fine_1 = self.fine_encoder(
-                x0[self.fine_scale_idx], x1[self.fine_scale_idx]
-            )
-        print(
-            f"Fine encoder memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
-        )
-
-        # # 4. PE
-        # x0, x1 = self.pe(x0, x1)  # S x [B x C x H x W]
-
-        # 5. Coarse encoder
+        # 2. Coarse encoder
         with Timer("Coarse encoder"):
             coarse_x0, coarse_x1 = (
                 x0[self.coarse_scale_idx],
@@ -469,12 +403,15 @@ class RCRM_v1(nn.Module):
             f"Coarse encoder memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
         )
 
-        # 6. Conf score mask generation
-        # with Timer("Conf score mask generation"):
-        # conf_mask0 = self.conf_mask_head(coarse_x0)
-        # conf_mask1 = self.conf_mask_head(coarse_x1)
+        # 3. Fine Encoder
+        with Timer("Fine encoder"):
+            if hasattr(self.feature_backbone, "fpn"):
+                x0, x1 = self.feature_backbone.fpn(x0, x1)
+            fine_0, fine_1 = self.fine_encoder(
+                x0[self.fine_scale_idx], x1[self.fine_scale_idx]
+            )
         print(
-            f"Conf score memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
+            f"Fine encoder memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
         )
 
         # Update features, shapes and conf mask
@@ -484,8 +421,6 @@ class RCRM_v1(nn.Module):
                 "feat1_c": coarse_x1,  # B, C, Hc1, Wc1
                 "hw0_c": coarse_x0.shape[2:],
                 "hw1_c": coarse_x1.shape[2:],
-                # "conf_mask0": conf_mask0,
-                # "conf_mask1": conf_mask1,
                 "feat0_f": fine_0,  # B, C, Hf0, Wf0
                 "feat1_f": fine_1,  # B, C, Hf1, Wf1
                 "hw0_f": fine_0.shape[2:],
@@ -493,7 +428,7 @@ class RCRM_v1(nn.Module):
             }
         )
 
-        # 7. Coarse matching
+        # 4. Coarse matching
         with Timer("Coarse correlation"):
             self._coarse_correlation(
                 data=data,
@@ -501,15 +436,13 @@ class RCRM_v1(nn.Module):
                 feat1_c=coarse_x1,
                 mask0=mask0,
                 mask1=mask1,
-                # conf_mask0=conf_mask0,
-                # conf_mask1=conf_mask1,
             )  # (B x HW x HW)
             self._get_coarse_coord_train(data=data)  # Get all coord from gt
         print(
             f"Coarse correlation memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
         )
 
-        # 8. Intermediate matching
+        # 5. Intermediate matching
         with Timer("Intermediate correlation"):
             self._fine_correlation(data=data)
             self._get_intermediate_coord_train(data=data)
@@ -517,7 +450,7 @@ class RCRM_v1(nn.Module):
             f"Intermediate correlation memory allocated: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
         )
 
-        # 9. Reccurent refinement for coordinates
+        # 6. Reccurent refinement for coordinates
         with Timer("Refinement"):
             self._fine_matching(data=data, print_mem=True)
         print(
@@ -562,7 +495,7 @@ class RCRM_v1(nn.Module):
         # 5. Update sim matrix
         data.update({"sim_matrix": sim_matrix})
 
-    @torch.no_grad()
+    @torch.no_grad
     def _get_coarse_coord_train(self, data: dict):
         b_idx_c = data["spv_b_ids"]
         i_idx_c = data["spv_i_ids"]
@@ -610,7 +543,7 @@ class RCRM_v1(nn.Module):
             }
         )
 
-    @torch.no_grad()
+    @torch.no_grad
     def _get_coarse_coord_test(self, data: dict):
         conf_matrix = data["sim_matrix"]
         # No dual-softmax in optimized version
@@ -725,7 +658,7 @@ class RCRM_v1(nn.Module):
         # 5. Update sim matrix
         data.update({"sim_matrix_f": sim_matrix})
 
-    @torch.no_grad()
+    @torch.no_grad
     def _get_intermediate_coord_train(self, data: dict):
         N = data["spv_b_ids_it"].shape[0]
 
@@ -739,12 +672,10 @@ class RCRM_v1(nn.Module):
         noise_scale = self.intermediate_noise_scale
         image_scale = data["scale1"][data["spv_b_ids_it"][idx]]
         noise = (
-            2
-            * (
-                torch.rand(
+            (
+                torch.randn(
                     intermediate_coord_1.shape[0], 2, device=intermediate_coord_1.device
                 )
-                - 0.5
             )
             * noise_scale
             * image_scale
@@ -763,7 +694,7 @@ class RCRM_v1(nn.Module):
             }
         )
 
-    @torch.no_grad()
+    @torch.no_grad
     def _get_intermediate_coord_test(self, data: dict):
         coarse_scale = self.coarse_scale
         fine_scale = self.fine_scale
@@ -771,10 +702,10 @@ class RCRM_v1(nn.Module):
         b_idx_c = data["b_idx_c"]  # [M]
         absolute_fine_scale0 = (
             fine_scale * data["scale0"] if "scale0" in data else fine_scale
-        )  # [B, 2]
+        )[b_idx_c]  # [M, 2]
         absolute_fine_scale1 = (
             fine_scale * data["scale1"] if "scale1" in data else fine_scale
-        )  # [B, 2]
+        )[b_idx_c]  # [M, 2]
         coarse_coord_0, coarse_coord_1 = data["coarse_coord_0"], data["coarse_coord_1"]
         window_size = int(coarse_scale / fine_scale)  # w
 
@@ -911,9 +842,7 @@ class RCRM_v1(nn.Module):
         # Normalize grid to [-1, 1] range
         grid = (
             grid
-            / torch.tensor(
-                [_feat.shape[3] - 1, _feat.shape[2] - 1], device=_feat.device
-            )
+            / torch.tensor([_feat.shape[3], _feat.shape[2]], device=_feat.device)
             * 2
         ) - 1
 
@@ -963,7 +892,7 @@ class RCRM_v1(nn.Module):
         fine_coord_0 = data["intermediate_coord_0"]  # N, 2
 
         # 1. Get feature window in image0 using intermediate matches
-        lookup_window_size = self.refine_lookup_radius * 2
+        lookup_window_size = int(self.refine_lookup_radius * 2)
         feat0_window = self._extract_feat_window_bilinear(
             feat0, b_idx_it, fine_coord_0 / scale0, lookup_window_size
         )  # [N, C, H, W]
@@ -1035,12 +964,18 @@ class RCRM_v1(nn.Module):
     def initial_forward(self):
         if hasattr(self.coarse_encoder, "initial_forward"):
             self.coarse_encoder.initial_forward(
-                size=int(self.config["BACKBONE"]["INPUT_SIZE"] / self.coarse_scale),
+                size=[
+                    int(self.input_size[0] / self.coarse_scale),
+                    int(self.input_size[1] / self.coarse_scale),
+                ],
                 batch_size=self.config["BATCH_SIZE"],
             )
         if hasattr(self.fine_encoder, "initial_forward"):
             self.fine_encoder.initial_forward(
-                size=int(self.config["BACKBONE"]["INPUT_SIZE"] / self.fine_scale),
+                size=[
+                    int(self.input_size[0] / self.coarse_scale),
+                    int(self.input_size[1] / self.coarse_scale),
+                ],
                 batch_size=self.config["BATCH_SIZE"],
             )
         if hasattr(self.recurrent_refine_unit, "initial_forward"):

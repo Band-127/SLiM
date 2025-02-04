@@ -328,6 +328,7 @@ class MambaEncoderLayer(nn.Module):
         device: torch.device = None,
         dtype: torch.dtype = None,
         using_mamba2: bool = False,
+        aggregation_size: int = 4,
     ):
         super(MambaEncoderLayer, self).__init__()
         self.in_output_dim: int = in_output_dim
@@ -337,6 +338,7 @@ class MambaEncoderLayer(nn.Module):
         self.device: torch.device = device
         self.dtype: torch.dtype = dtype
         self.using_mamba2: bool = using_mamba2
+        self.aggregation_size: int = aggregation_size
 
         self.mamba = QuadConcatMambaLayer(
             in_output_dim=self.in_output_dim,
@@ -353,8 +355,8 @@ class MambaEncoderLayer(nn.Module):
         self.downsample_conv = nn.Conv2d(
             in_channels=self.in_output_dim,
             out_channels=self.in_output_dim,
-            kernel_size=2,
-            stride=2,
+            kernel_size=self.aggregation_size,
+            stride=self.aggregation_size,
         )
 
     def forward(
@@ -374,7 +376,7 @@ class MambaEncoderLayer(nn.Module):
         x1 = self.layer_norm(x1)
 
         # 3. Rearrange features into (B, H*W, C) and (B, W*H, C), two directions
-        # Same effect as following, but more efficient
+        # Same effect as following, but a bit more efficient
         # x0_hw = rearrange(x0, "b c h w -> b (h w) c")
         # x1_hw = rearrange(x1, "b c h w -> b (h w) c")
         # x0_wh = rearrange(x0, "b c h w -> b (w h) c")
@@ -388,7 +390,7 @@ class MambaEncoderLayer(nn.Module):
         x0_hw, x1_hw, x0_wh, x1_wh = self.mamba(x0_hw, x1_hw, x0_wh, x1_wh)
 
         # 5. Rearrange features back to (B, C, H, W)
-        # Same effect as following, but more efficient
+        # Same effect as following, but a bit more efficient
         # x0_hw = rearrange(x0_hw, "b (h w) c -> b c h w", h=x0_shape[0], w=x0_shape[1])
         # x1_hw = rearrange(x1_hw, "b (h w) c -> b c h w", h=x1_shape[0], w=x1_shape[1])
         # x0_wh = rearrange(x0_wh, "b (w h) c -> b c h w", h=x0_shape[0], w=x0_shape[1])
@@ -409,8 +411,12 @@ class MambaEncoderLayer(nn.Module):
         x1 = x1_hw + x1_wh
 
         # 6. Back to original resolution
-        x0 = F.interpolate(x0, scale_factor=2, mode="bilinear", align_corners=True)
-        x1 = F.interpolate(x1, scale_factor=2, mode="bilinear", align_corners=True)
+        x0 = F.interpolate(
+            x0, scale_factor=self.aggregation_size, mode="bilinear", align_corners=False
+        )
+        x1 = F.interpolate(
+            x1, scale_factor=self.aggregation_size, mode="bilinear", align_corners=False
+        )
 
         return x0, x1
 

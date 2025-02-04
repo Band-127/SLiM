@@ -16,27 +16,37 @@ loguru_logger = get_rank_zero_only_logger(loguru_logger)
 
 
 def main():
+    # latest_ckpt_path = (
+    #     "logs/tb_logs/MegaDepth_960_v1_8_2_ConvVMamba_C2F0_I4R3_/version_2/"
+    # )
+    # latest_ckpt = "checkpoints/epoch=13-auc@5=0.561-auc@10=0.720-auc@20=0.835.ckpt"
     latest_ckpt_path = (
-        "logs/tb_logs/ScanNet_640_v1_8_2_VMamba_T_cropped_FPN_C2F2_I4R3_A/version_0/"
+        "logs/tb_logs/MegaDepth_1024_v1_8_2_ConvVMamba_C2F0_I4R3_/version_0/"
     )
-    latest_ckpt = "checkpoints/last.ckpt"
-    devices = "2,3,4,5,6,7"
-    ransac_thres = 0.2
+    latest_ckpt = "checkpoints/epoch=0-auc@5=0.517-auc@10=0.677-auc@20=0.791.ckpt"
+    devices = "6,7"
+    ransac_thres = 0.5
     ransac_times = 1
-    coarse_thres = 0.15
-    # coarse_thres = 0.35
+    coarse_thres = 0.1
     intermediate_thres = 0.1
-    coarse_max = 10000
-    intermediate_max = 10000
-    # coarse_max = 5000
-    # intermediate_max = 10000
+    coarse_max = 6000
+    intermediate_max = 18000
     refine_iters = 4
-    image_size = 640
+    image_size = [1024, 1024]
+    
+    # ransac_thres = 0.5
+    # ransac_times = 5
+    # coarse_thres = 0.03
+    # intermediate_thres = 0.03
+    # coarse_max = 600
+    # intermediate_max = 1800
+    # refine_iters = 4
+    # image_size = [480, 640]
 
     sys.path.append(latest_ckpt_path)
     get_cfg_defaults = importlib.import_module("config").get_cfg_defaults
 
-    torch.set_float32_matmul_precision("high")
+    # torch.set_float32_matmul_precision("high")
 
     # get configurations
     config: CN = get_cfg_defaults()
@@ -67,7 +77,8 @@ def main():
     config.TRAINER.RANSAC_TIMES = ransac_times
     config.MODEL.COARSE_MATCHING.THRESHOLD = coarse_thres
     config.MODEL.INTERMEDIATE_MATCHING.THRESHOLD = intermediate_thres
-    config.IMAGE_SIZE = config.MODEL.BACKBONE.INPUT_SIZE = config.DATASET.MGDPT_IMG_RESIZE = image_size
+    config.IMAGE_SIZE = config.DATASET.MGDPT_IMG_RESIZE = image_size[0]
+    config.MODEL.BACKBONE.INPUT_SIZE = image_size
     config.MODEL.COARSE_MATCHING.MAX_MATCHES = coarse_max
     config.MODEL.INTERMEDIATE_MATCHING.MAX_MATCHES = intermediate_max
     config.MODEL.REFINE_ITERS = refine_iters

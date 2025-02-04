@@ -11,7 +11,7 @@ from .geometry import warp_kpts
 
 
 ##############  ↓  Coarse-Level supervision  ↓  ##############
-@torch.no_grad()
+@torch.no_grad
 def mask_pts_at_padded_regions(grid_pt, mask):
     """
     将填充区域的点设置为零, 用于处理megadepth数据集中的零填充图像。
@@ -29,7 +29,7 @@ def mask_pts_at_padded_regions(grid_pt, mask):
     return grid_pt
 
 
-@torch.no_grad()
+@torch.no_grad
 def spvs_coarse(data, coarse_scale):
     """
     Update:
@@ -196,9 +196,9 @@ def spvs_coarse(data, coarse_scale):
 
 
 def compute_supervision_coarse(data, coarse_scale, config):
-    assert (
-        len(set(data["dataset_name"])) == 1
-    ), "Do not support mixed datasets training!"
+    assert len(set(data["dataset_name"])) == 1, (
+        "Do not support mixed datasets training!"
+    )
     data_source = data["dataset_name"][0]
     if data_source.lower() in ["scannet", "megadepth"]:
         spvs_coarse(data, coarse_scale)
@@ -258,14 +258,17 @@ def get_coarse_coord(data, config):
     return coarse_coord_0, coarse_coord_1
 
 
-@torch.no_grad()
+@torch.no_grad
 def spvs_intermediate_v1(data, config):
     device = data["image0"].device
     N, _, H0, W0 = data["image0"].shape
     _, _, H1, W1 = data["image1"].shape
     coarse_coord_0, coarse_coord_1 = get_coarse_coord(data, config)
     coarse_scale = config["MODEL"]["COARSE_SCALE"]
-    fine_scale = config["MODEL"]["FINE_SCALE"]
+    # EDITED!!!
+    # fine_scale = config["MODEL"]["FINE_SCALE"]
+    fine_scale = 1
+    # EDITED!!!
     b_idx_c = data["spv_b_ids"]  # [M]
 
     window_size = int(coarse_scale / fine_scale)  # w
@@ -471,7 +474,7 @@ def spvs_intermediate_v1(data, config):
 
 
 ##############  ↓  Fine-Level supervision  ↓  ##############
-@torch.no_grad()
+@torch.no_grad
 def spvs_fine_v1(data, config):
     """
     Update:
@@ -481,7 +484,10 @@ def spvs_fine_v1(data, config):
         }
     """
     coarse_scale = config["MODEL"]["COARSE_SCALE"]
-    fine_scale = config["MODEL"]["FINE_SCALE"]
+    # EDITED!!!
+    # fine_scale = config["MODEL"]["FINE_SCALE"]
+    fine_scale = 1
+    # EDITED!!!
     device = data["image0"].device
     N = data["image0"].shape[0]
     absolute_scale1 = (

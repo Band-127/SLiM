@@ -204,7 +204,7 @@ class RepVGG_Feature_Extractor_with_FPN(nn.Module):
         ]  # smallest scale feature no need to fuse with other scales
         for i in range(len(features) - 2, -1, -1):
             higher_feature = F.interpolate(
-                fpn_features[0], scale_factor=2, mode="bilinear", align_corners=True
+                fpn_features[0], scale_factor=2, mode="bilinear", align_corners=False
             )
             current_feature = self.fpn_layers[i](features[i])
             fused_feature = self.fpn_fuse[i - 1](higher_feature + current_feature)
