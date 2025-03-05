@@ -5,7 +5,7 @@ import torch
 from yacs.config import CfgNode as CN
 import pytorch_lightning as pl
 from loguru import logger as loguru_logger
-
+import cv2
 from utils.profiler import build_profiler
 from utils.misc import setup_gpus, get_rank_zero_only_logger
 from src.lightning_rcrm import PL_RCRM
@@ -21,35 +21,36 @@ def main():
     # )
     # latest_ckpt = "checkpoints/epoch=13-auc@5=0.561-auc@10=0.720-auc@20=0.835.ckpt"
     latest_ckpt_path = (
-        "logs/tb_logs/MegaDepth_1024_v1_8_2_ConvVMamba_C2F0_I4R3_/version_0/"
+        "logs/tb_logs/MegaDepth_1024_v1_8_2_ConvVMamba_C2F0_I4R3_/version_3/"
     )
-    latest_ckpt = "checkpoints/epoch=0-auc@5=0.517-auc@10=0.677-auc@20=0.791.ckpt"
+    # latest_ckpt = "checkpoints/epoch=25-auc@5=0.533-auc@10=0.699-auc@20=0.818.ckpt"
+    latest_ckpt = "checkpoints/epoch=18-auc@5=0.533-auc@10=0.697-auc@20=0.819.ckpt"
     devices = "6,7"
-    ransac_thres = 0.5
-    ransac_times = 1
-    coarse_thres = 0.1
-    intermediate_thres = 0.1
-    coarse_max = 6000
-    intermediate_max = 18000
-    refine_iters = 4
-    image_size = [1024, 1024]
-    
+    seed = 66
     # ransac_thres = 0.5
     # ransac_times = 5
     # coarse_thres = 0.03
     # intermediate_thres = 0.03
-    # coarse_max = 600
-    # intermediate_max = 1800
+    # coarse_max = 6000
+    # intermediate_max = 18000
     # refine_iters = 4
-    # image_size = [480, 640]
+    # image_size = [1184, 1184]
+    
+    ransac_thres = 0.5
+    ransac_times = 1
+    coarse_thres = 0.0002
+    intermediate_thres = 0.0002
+    coarse_max = 600
+    intermediate_max = 2400
+    refine_iters = 4
+    image_size = [480, 640]
 
     sys.path.append(latest_ckpt_path)
     get_cfg_defaults = importlib.import_module("config").get_cfg_defaults
 
-    # torch.set_float32_matmul_precision("high")
-
     # get configurations
     config: CN = get_cfg_defaults()
+    config.GLOBAL_SEED = seed
     pl.seed_everything(config.GLOBAL_SEED)
 
     # set train/test
@@ -93,11 +94,11 @@ def main():
         profiler=profiler,
         dump_dir=config.DUMP_DIR,
     )
-    loguru_logger.info("MAFF Lightning Module initialized!")
+    loguru_logger.info("Lightning Module initialized!")
 
     # Lightning data
     data_module = RCRM_Dataset(config=config)
-    loguru_logger.info("MAFF Data Module initialized!")
+    loguru_logger.info("Data Module initialized!")
 
     # Torch Lightning Trainer
     trainer = pl.Trainer(

@@ -103,7 +103,7 @@ class RCRM_v1(nn.Module):
 
     def forward(self, data: dict, training: bool = False):
         """
-        Forward function of MAFF
+        Forward function
         Input:
             data (dict): {
                 "image0": (torch.Tensor): (B, 1, H, W)
@@ -549,7 +549,7 @@ class RCRM_v1(nn.Module):
         # No dual-softmax in optimized version
         conf_matrix = F.softmax(conf_matrix, 1) * F.softmax(conf_matrix, 2)
         # Get top max_coarse_matches matches with highest confidence
-        top_k = min(self.max_coarse_matches, conf_matrix.numel())
+        top_k = min(self.max_coarse_matches * conf_matrix.shape[0], conf_matrix.numel())
         flat_conf = conf_matrix.view(-1)
         top_k_values, top_k_indices = torch.topk(flat_conf, k=top_k)
 
@@ -726,7 +726,7 @@ class RCRM_v1(nn.Module):
         flat_conf = conf_matrix.view(conf_matrix.shape[0], -1)  # [M, Lf0*Lf1]
         top_k = int(
             min(
-                self.max_intermediate_matches / conf_matrix.shape[0], flat_conf.shape[1]
+                self.max_intermediate_matches * 2 / conf_matrix.shape[0], flat_conf.shape[1]
             )
         )
         top_k_values, top_k_indices = torch.topk(flat_conf, k=top_k, dim=1)  # [M, K]
@@ -871,7 +871,7 @@ class RCRM_v1(nn.Module):
             window = window.view(-1, m, window_size, window_size).permute(
                 1, 0, 2, 3
             )  # m x C x Hout x Wout
-            windows[mask] = window
+            windows[mask] = window.to(windows.dtype)
 
         return windows
 

@@ -8,6 +8,7 @@ from yacs.config import CfgNode as CN
 from timm.models.layers import DropPath, trunc_normal_
 from src.backbone.vssm.csm_triton import cross_scan_fn, cross_merge_fn
 from src.backbone.vssm.csms6s import selective_scan_fn
+from src.backbone.vssm.vmamba import mamba_init
 
 
 class SizeInvariantPE(nn.Module):
@@ -16,18 +17,18 @@ class SizeInvariantPE(nn.Module):
         super().__init__()
         self.d_model = d_model
         # Size invariant position encoding, original resolution: 512*512, interpolate into input size during input
-        pos_x = torch.arange(512, dtype=torch.float32) * torch.pi
-        pos_y = torch.arange(512, dtype=torch.float32) * torch.pi
+        pos_x = torch.arange(256, dtype=torch.float32) * torch.pi
+        pos_y = torch.arange(256, dtype=torch.float32) * torch.pi
         d_pos_embeddings = int(math.ceil(d_model / 2))
         inv_freq = 1.0 / (
             (32768)
             ** (
                 torch.arange(0, d_pos_embeddings, 2, dtype=torch.float32)
-                / (d_pos_embeddings - 1)
+                / d_pos_embeddings
             )
         )
         pos_emb = torch.zeros(
-            size=(512, 512, 4 * inv_freq.shape[0]), dtype=torch.float32
+            size=(256, 256, 4 * inv_freq.shape[0]), dtype=torch.float32
         )  # H, W, C'
         temp_x = torch.einsum("i,j->ij", pos_x, inv_freq)
         temp_y = torch.einsum("i,j->ij", pos_y, inv_freq)
@@ -39,24 +40,47 @@ class SizeInvariantPE(nn.Module):
         pos_emb[:, :, 1::4] = cos_x
         pos_emb[:, :, 2::4] = sin_y
         pos_emb[:, :, 3::4] = cos_y
-
         # Crop the exceeding channels, C' -> C
         pos_emb = pos_emb[:, :, 0:d_model]
         # H, W, C -> B, C, H, W
         pos_emb = pos_emb.swapaxes(0, -1).swapaxes(-1, -2).unsqueeze(0)
-        self.register_buffer("pos_emb", pos_emb)
+        self.register_buffer("pos_emb", pos_emb, persistent=False)
 
-        self.gamma = nn.Parameter(torch.ones(1, d_model, 1, 1) * 0.5)
+        # self.gamma = nn.Parameter(torch.ones(1, d_model, 1, 1) * 0.1)
+        # Better Initialization, empirical, which means the center freq got the most attention
+        def create_gaussian_kernel(kernel_size, sigma):
+            center = kernel_size / 2
+            x = torch.linspace(-center, center, kernel_size)
+            gaussian_kernel = (1 / (2 * torch.pi * sigma**2) ** 0.5) * torch.exp(
+                -0.5 * (x / sigma) ** 2
+            )
+            gaussian_kernel /= gaussian_kernel.sum()
+            return gaussian_kernel
 
-    def forward(self, x):
-        _, C, H, W = x.shape
-        return (
-            x
-            + F.interpolate(
+        self.gamma = create_gaussian_kernel(d_model, d_model / 12).view(1, -1, 1, 1)
+        # Last Channel for image index, so give more attention too
+        self.gamma[0, -1, 0, 0] = self.gamma.max()
+        self.gamma = nn.Parameter(self.gamma)
+
+    # def forward(self, x):
+    #     _, C, H, W = x.shape
+    #     with torch.no_grad():
+    #         pe = F.interpolate(
+    #             self.pos_emb[:, :C], size=(H, W), mode="bilinear", align_corners=False
+    #         )
+    #     return x + pe * self.gamma
+
+    def forward(self, x0, x1):
+        _, C, H, W = x0.shape
+        with torch.no_grad():
+            pe = F.interpolate(
                 self.pos_emb[:, :C], size=(H, W), mode="bilinear", align_corners=False
             )
-            * self.gamma
-        )
+            pe0 = pe.clone()
+            pe1 = pe.clone()
+            pe0[:, -1, :, :] = 0
+            pe1[:, -1, :, :] = 1
+        return x0 + pe0 * self.gamma, x1 + pe1 * self.gamma
 
 
 class LayerNorm2d(nn.LayerNorm):
@@ -162,15 +186,29 @@ class Easy_SS2D(nn.Module):
         self.x_proj_weight = nn.Parameter(
             torch.randn(self.k_group, (self.dt_rank + self.d_state * 2), self.d_inner)
         )  # (K, N, inner)
-        self.Ds = nn.Parameter(torch.ones((self.k_group * self.d_inner)))
-        self.A_logs = nn.Parameter(
-            torch.zeros((self.k_group * self.d_inner, self.d_state))
-        )  # A == -A_logs.exp() < 0; # 0 < exp(A * dt) < 1
-        self.dt_projs_weight = nn.Parameter(
-            0.1 * torch.rand((self.k_group, self.d_inner, self.dt_rank))
-        )
-        self.dt_projs_bias = nn.Parameter(
-            0.1 * torch.rand((self.k_group, self.d_inner))
+        # self.Ds = nn.Parameter(torch.ones((self.k_group * self.d_inner)))
+        # self.A_logs = nn.Parameter(
+        #     torch.zeros((self.k_group * self.d_inner, self.d_state))
+        # )  # A == -A_logs.exp() < 0; # 0 < exp(A * dt) < 1
+        # self.dt_projs_weight = nn.Parameter(
+        #     0.1 * torch.rand((self.k_group, self.d_inner, self.dt_rank))
+        # )
+        # self.dt_projs_bias = nn.Parameter(
+        #     0.1 * torch.rand((self.k_group, self.d_inner))
+        # )
+
+        self.A_logs, self.Ds, self.dt_projs_weight, self.dt_projs_bias = (
+            mamba_init.init_dt_A_D(
+                d_state=self.d_state,
+                dt_rank=self.dt_rank,
+                d_inner=self.d_inner,
+                dt_scale=1.0,
+                dt_init="random",
+                dt_min=0.001,
+                dt_max=0.1,
+                dt_init_floor=1e-4,
+                k_group=4,
+            )
         )
 
     def forwardSS2D(self, x: torch.Tensor):
@@ -321,7 +359,7 @@ class ConvVMamba(nn.Module):
                         ConvNeXt_Block(
                             dim=self.layers_dims[0],
                             kernel_size=self.conv_kernel_size,
-                            drop_rate=0.01,
+                            drop_rate=0.0,
                         )
                         for i in range(self.layers_depth[0])
                     ]
@@ -352,10 +390,10 @@ class ConvVMamba(nn.Module):
                             conv=ConvNeXt_Block(
                                 dim=self.layers_dims[i + 1],
                                 kernel_size=self.conv_kernel_size,
-                                drop_rate=0.01,
+                                drop_rate=0.0,
                             ),
                             mamba=Easy_VSSBlock(
-                                dim=self.layers_dims[i + 1], drop_rate=0.01
+                                dim=self.layers_dims[i + 1], drop_rate=0.0
                             ),
                         )
                     )
@@ -444,8 +482,9 @@ class ConvVMamba(nn.Module):
     def upsample_sum(
         not_upsample_feature: torch.Tensor, upsample_feature: torch.Tensor
     ):
+        _, _, H, W = not_upsample_feature.shape
         return not_upsample_feature + F.interpolate(
-            upsample_feature, scale_factor=2.0, mode="bilinear", align_corners=False
+            upsample_feature, size=(H, W), mode="bilinear", align_corners=False
         )
 
     def forward(self, x0: torch.Tensor, x1: torch.Tensor):
@@ -460,8 +499,7 @@ class ConvVMamba(nn.Module):
         features_0.append(x0)
         features_1.append(x1)
 
-        x0 = self.pe(x0)
-        x1 = self.pe(x1)
+        x0, x1 = self.pe(x0, x1)
         # 2. Others
         x = torch.concat([x0, x1], dim=-1)  # Concat in W
         for stage in self.stages:

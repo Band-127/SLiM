@@ -51,11 +51,11 @@ def main():
     model = PL_RCRM(
         config=config, pretrained_ckpt=config.PRETRAINED_PATH, profiler=profiler
     )
-    loguru_logger.info("MAFF Lightning Module initialized!")
+    loguru_logger.info("Lightning Module initialized!")
 
     # Lightning data
     data_module = RCRM_Dataset(config=config)
-    loguru_logger.info("MAFF Data Module initialized!")
+    loguru_logger.info("Data Module initialized!")
 
     # TensorBoard Logger
     logger = TensorBoardLogger(

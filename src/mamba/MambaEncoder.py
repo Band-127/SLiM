@@ -364,6 +364,8 @@ class MambaEncoderLayer(nn.Module):
         x0: torch.Tensor,
         x1: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        _, _, H0, W0 = x0.shape
+        _, _, H1, W1 = x1.shape
         # 1. Aggregation
         x0 = self.downsample_conv(x0)
         x1 = self.downsample_conv(x1)
@@ -411,12 +413,8 @@ class MambaEncoderLayer(nn.Module):
         x1 = x1_hw + x1_wh
 
         # 6. Back to original resolution
-        x0 = F.interpolate(
-            x0, scale_factor=self.aggregation_size, mode="bilinear", align_corners=False
-        )
-        x1 = F.interpolate(
-            x1, scale_factor=self.aggregation_size, mode="bilinear", align_corners=False
-        )
+        x0 = F.interpolate(x0, size=(H0, W0), mode="bilinear", align_corners=False)
+        x1 = F.interpolate(x1, size=(H1, W1), mode="bilinear", align_corners=False)
 
         return x0, x1
 

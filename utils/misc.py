@@ -109,8 +109,8 @@ def format_number(number):
         unit_index += 1
 
     if number < 10:
-        return f"{number:.1f}{units[unit_index]}"
-    return f"{int(number)}{units[unit_index]}"
+        return f"{number:.2f}{units[unit_index]}"
+    return f"{number:.2f}{units[unit_index]}"
 
 
 def count_parameters(model, indent="", min_params=1, recursive=False):

@@ -8,7 +8,6 @@ from timm.models.layers import trunc_normal_, DropPath
 
 from src.utils.misc import LayerNorm2d
 from src.mamba.MambaEncoder import MambaLayer
-from src.utils.inception_like_cnn import InceptionNeXt
 
 
 class QuadTreeFineEncoder(nn.Module):
@@ -179,10 +178,10 @@ class FineEncoder_conv(nn.Module):
     @torch.no_grad
     def initial_forward(self, size: Sequence[int], batch_size: int):
         for i in range(5):
-            random_data_0 = torch.randn(batch_size, self.input_dim, size[0], size[1]).to(
+            random_data_0 = torch.zeros(batch_size, self.input_dim, size[0], size[1]).to(
                 self.input_conv.weight.device
             )
-            random_data_1 = torch.randn(batch_size, self.input_dim, size[0], size[1]).to(
+            random_data_1 = torch.zeros(batch_size, self.input_dim, size[0], size[1]).to(
                 self.input_conv.weight.device
             )
             _ = self.forward(random_data_0, random_data_1)

@@ -208,10 +208,10 @@ class RecurrentRefinementUnit(nn.Module):
     @torch.no_grad
     def initial_forward(self):
         for i in range(5):
-            feat0_window = torch.randn(10000, self.input_dim, 6, 6).to(
+            feat0_window = torch.zeros(10000, self.input_dim, 6, 6).to(
                 self.conv_offset[0].weight.device
             )
-            feat1_window = torch.randn(10000, self.input_dim, 6, 6).to(
+            feat1_window = torch.zeros(10000, self.input_dim, 6, 6).to(
                 self.conv_offset[0].weight.device
             )
             hidden_state = torch.zeros(10000, self.hidden_dim, 6, 6).to(

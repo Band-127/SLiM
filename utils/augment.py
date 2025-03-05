@@ -52,7 +52,7 @@ class MobileAug(object):
         return self.augmentor(image=x)["image"]
 
 
-class MAFFAug(object):
+class RCRMAug(object):
     def __init__(self):
         self.augmentor = A.Compose(
             [
@@ -77,7 +77,7 @@ class MAFFAug(object):
         return self.augmentor(image=x)["image"]
 
 
-class MAFFLiteAug(object):
+class RCRMLiteAug(object):
     def __init__(self):
         self.augmentor = A.Compose(
             [
@@ -102,10 +102,10 @@ def build_augmentor(method=None, **kwargs):
         return DarkAug()
     elif method == "mobile":
         return MobileAug()
-    elif method == "maff":
-        return MAFFAug()
-    elif method == "maff_lite":
-        return MAFFLiteAug()
+    elif method == "rcrm":
+        return RCRMAug()
+    elif method == "rcrm_lite":
+        return RCRMLiteAug()
     elif method is None:
         return None
     else:
@@ -117,10 +117,10 @@ def get_augmentor_builder(method=None, **kwargs):
         return DarkAug
     elif method == "mobile":
         return MobileAug
-    elif method == "maff":
-        return MAFFAug
-    elif method == "maff_lite":
-        return MAFFLiteAug
+    elif method == "rcrm":
+        return RCRMAug
+    elif method == "rcrm_lite":
+        return RCRMLiteAug
     elif method is None:
         return None
     else:

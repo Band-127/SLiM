@@ -10,20 +10,20 @@ _CN = CN()
 _CN.DEBUG = False
 _CN.OVERALL_MODE = "train"          # options: ["train", "test"]
 _CN.GLOBAL_SEED = 66                # for reproducibility, None for random
-_CN.IMAGE_SIZE = 1024
-_CN.VAL_IMAGE_SIZE = 1184
+_CN.IMAGE_SIZE = 640
+_CN.VAL_IMAGE_SIZE = 640
 _CN.IMAGE_SIZE_FACTOR = 32
 _CN.IMAGE_SIZE_MIN_MULT = 25        # e.g. 20: 640 = 20 * 32(IMAGE_SIZE_FACTOR), minimum input_size = 640
 _CN.DTYPE = "float32"
 _CN.PRETRAINED_PATH = None
-_CN.DUMP_DIR = "dump/maff_baseline_outdoor"
+_CN.DUMP_DIR = "dump/rcrm_baseline_outdoor"
 
 ########    Device Configurations    ########
 # Support CUDA/CPU only!!!
 _CN.DEVICE = CN()
 _CN.DEVICE.ENABLE_GPU = True                    # Whether enable GPUs, default true
 _CN.DEVICE.ENABLE_DDP = True                    # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "2,3,4,5,6,7"                  # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.GPU_IDX = "2,3,4,5,6,7"          # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
@@ -43,6 +43,7 @@ if _CN.DATASET.DATA_SOURCE == "MegaDepth":
     _CN.DATASET.TRAIN_POSE_ROOT = None                                                                      # (optional directory for poses)
     _CN.DATASET.TRAIN_NPZ_ROOT = f"{_CN.DATASET.TRAIN_DATA_BASE_PATH}/index/scene_info_0.1_0.7"             # None if val data from all scenes are bundled into a single npz file
     _CN.DATASET.TRAIN_LIST_PATH = f"{_CN.DATASET.TRAIN_DATA_BASE_PATH}/index/trainvaltest_list/train_list.txt"
+    # _CN.DATASET.TRAIN_LIST_PATH = f"{_CN.DATASET.TRAIN_DATA_BASE_PATH}/index/trainvaltest_list/debug_list.txt"
     _CN.DATASET.TRAIN_INTRINSIC_PATH = None
     # validating
     _CN.DATASET.VAL_DATA_BASE_PATH = "data/megadepth"
@@ -50,6 +51,7 @@ if _CN.DATASET.DATA_SOURCE == "MegaDepth":
     _CN.DATASET.VAL_POSE_ROOT = None                                                                        # (optional directory for poses)
     _CN.DATASET.VAL_NPZ_ROOT = f"{_CN.DATASET.VAL_DATA_BASE_PATH}/index/scene_info_val_1500"
     _CN.DATASET.VAL_LIST_PATH = f"{_CN.DATASET.VAL_DATA_BASE_PATH}/index/trainvaltest_list/val_list.txt"    # None if val data from all scenes are bundled into a single npz file
+    # _CN.DATASET.VAL_LIST_PATH = f"{_CN.DATASET.VAL_DATA_BASE_PATH}/index/trainvaltest_list/debug_list.txt"    # None if val data from all scenes are bundled into a single npz file
     _CN.DATASET.VAL_INTRINSIC_PATH = None
     # testing
     _CN.DATASET.TEST_DATA_SOURCE = "MegaDepth"
@@ -92,7 +94,7 @@ elif _CN.DATASET.DATA_SOURCE == "ScanNet":
 _CN.DATASET.PARALLEL_WORKERS_NUM = 16
 _CN.DATASET.MIN_OVERLAP_SCORE_TRAIN = 0.0           # discard data with overlap_score < min_overlap_score
 _CN.DATASET.MIN_OVERLAP_SCORE_TEST = 0.0
-_CN.DATASET.AUGMENTATION_TYPE = None                # options: [None, "dark", "mobile", "maff", "maff_lite"]
+_CN.DATASET.AUGMENTATION_TYPE = None                # options: [None, "dark", "mobile", "rcrm", "rcrm_lite"]
 # MegaDepth options
 _CN.DATASET.MGDPT_IMG_RESIZE = _CN.IMAGE_SIZE       # resize the longer side, zero-pad bottom-right to square.
 _CN.DATASET.MGDPT_IMG_PAD = True                    # pad img to square with size = MGDPT_IMG_RESIZE
@@ -117,18 +119,18 @@ _CN.LOADER.PIN_MEMORY = True                        # If True, the data loader w
 _CN.TRAINER = CN()
 _CN.TRAINER.WORLD_SIZE = None                       # Will be calculated using number of nodes and exact number of devices available
 _CN.TRAINER.GRADIENT_CLIPPING = 0.8                 # Gradient clipping
-_CN.TRAINER.CANONICAL_BS = 8
+_CN.TRAINER.CANONICAL_BS = 6
 _CN.TRAINER.CANONICAL_LR = 1e-3                     # using LR finder provided by pytorch lightning if FIND_LR set to True
 _CN.TRAINER.SCALING = None                          # this will be calculated automatically
 _CN.TRAINER.FIND_LR = False                         # use learning rate finder from pytorch-lightning, TODO: fix lr finder
-_CN.TRAINER.FIRST_STAGE_EPOCHS = 5                  # first stage epochs
+_CN.TRAINER.FIRST_STAGE_EPOCHS = 0                  # first stage epochs
 # gradient accumulation
 _CN.TRAINER.ACCUMULATE_GRAD_BATCHES = 1
 # optimizer
 _CN.TRAINER.OPTIMIZER = "AdamW"                         # options: [Adam, AdamW, SGD]
 _CN.TRAINER.TRUE_LR = None
 _CN.TRAINER.ADAM_DECAY = 0.1
-_CN.TRAINER.ADAMW_DECAY = 0.1
+_CN.TRAINER.ADAMW_DECAY = 0.01
 _CN.TRAINER.SGD_MOMENTUM = 0.9
 # learning rate scheduler
 _CN.TRAINER.SCHEDULER = "MultiStepLR"                   # options: [MultiStepLR, CosineAnnealing, ExponentialLR, CosineAnnealingWarmRestarts]
@@ -153,7 +155,7 @@ _CN.TRAINER.PLOT_MATCHES_ALPHA = 'dynamic'
 # For metric calculation
 _CN.TRAINER.RANSAC_PIXEL_THR = 0.5
 _CN.TRAINER.RANSAC_CONF = 0.99999
-_CN.TRAINER.RANSAC_TIMES = 5
+_CN.TRAINER.RANSAC_TIMES = 1
 _CN.TRAINER.EPI_ERR_THR = 5e-4 if _CN.DATASET.TRAINVAL_DATA_SOURCE == "ScanNet" else 1e-4   # recommendation: 5e-4 for ScanNet, 1e-4 for MegaDepth (from SuperGlue)
 
 ########    Logging Configurations    ########
@@ -225,12 +227,12 @@ _CN.MODEL.FINE_ENCODER.DROP_RATE = 0.05
 
 # Coarse matching
 _CN.MODEL.COARSE_MATCHING = CN()
-_CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.1
-_CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 4000
+_CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.08
+_CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 6000
 
 # Intermediate matching
 _CN.MODEL.INTERMEDIATE_MATCHING = CN()
-_CN.MODEL.INTERMEDIATE_MATCHING.THRESHOLD = 0.1
+_CN.MODEL.INTERMEDIATE_MATCHING.THRESHOLD = 0.08
 _CN.MODEL.INTERMEDIATE_MATCHING.MAX_MATCHES = 8000
 _CN.MODEL.INTERMEDIATE_MATCHING.TRAIN_NOISE_SCALE = 0.75
 
@@ -247,7 +249,7 @@ _CN.LOSS.COARSE_WEIGHT = 0.25
 _CN.LOSS.FOCAL_GAMMA_COARSE = 2.0
 _CN.LOSS.COARSE_PERCENT = 0.9
 # INTERMEDIATE MATCHING
-_CN.LOSS.INTERMEDIATE_WEIGHT = 0.25
+_CN.LOSS.INTERMEDIATE_WEIGHT = 0.2
 _CN.LOSS.FOCAL_GAMMA_INTERMEDIATE = 2.0
 # FINE MATCHING
 _CN.LOSS.FINE_WEIGHT = 1.0

@@ -266,7 +266,7 @@ class PL_RCRM(pl.LightningModule):
                     batch, coarse_scale=self.coarse_scale, config=self.config
                 )
 
-        with self.profiler.profile("MAFF"):
+        with self.profiler.profile("Main forward"):
             start_time = time.perf_counter()
             self.rcrm(batch, training=training)
             end_time = time.perf_counter()
@@ -357,22 +357,34 @@ class PL_RCRM(pl.LightningModule):
             if self.trainer.global_rank == 0:
                 print(self.rcrm)
                 print_params_summary(self.rcrm, recursive=False)
-        if self.trainer.current_epoch < self.first_stage_epochs:
+            self.wait_all()
+            self.set_input_size(self.max_input_size)
+        elif self.trainer.current_epoch < self.first_stage_epochs:
+            # Random input size
             if self.trainer.global_rank == 0:
-                # Random input size
-                input_size = (
-                    self.max_input_multiplier
-                    - int(
-                        min(np.abs(np.random.randn(1)), 4)
-                        / 4
-                        * (self.max_input_multiplier - self.min_input_multiplier)
+                input_size = torch.tensor(
+                    (
+                        self.max_input_multiplier
+                        - int(
+                            min(np.abs(np.random.randn(1)), 3)
+                            / 3
+                            * (self.max_input_multiplier - self.min_input_multiplier)
+                        )
                     )
-                ) * self.image_size_factor
-                self.set_input_size(input_size)
-        elif self.trainer.current_epoch == self.first_stage_epochs:
+                    * self.image_size_factor,
+                    dtype=torch.long,
+                    device=self.device,
+                )
+            else:
+                input_size = torch.zeros(1, dtype=torch.long, device=self.device)
+            if dist.is_initialized():
+                dist.broadcast(input_size, src=0)
+            self.wait_all()
+            self.set_input_size(input_size.item())
+        elif self.trainer.current_epoch >= self.first_stage_epochs:
             self.loss.turn_off_conf_mask_loss = True
-            if self.trainer.global_rank == 0:
-                self.set_input_size(self.max_input_size)
+            self.wait_all()
+            self.set_input_size(self.max_input_size)
         self.rcrm.train()
         self.rcrm.initial_forward()
 
@@ -419,15 +431,11 @@ class PL_RCRM(pl.LightningModule):
         )
 
     def on_validation_epoch_start(self):
-        if self.trainer.global_rank == 0:
-            self.current_train_input_size = self.current_input_size
-            self.set_input_size(self.val_input_size)
+        self.set_input_size(self.val_input_size)
         self.rcrm.eval()
         self.rcrm.initial_forward()
 
     def on_validation_epoch_end(self):
-        if self.trainer.global_rank == 0:
-            self.set_input_size(self.current_train_input_size)
         # handle multiple validation sets
         multi_outputs = (
             [self.validation_outputs]
@@ -527,7 +535,8 @@ class PL_RCRM(pl.LightningModule):
         # inference
         start_time = time.perf_counter()
         with torch.inference_mode(True):
-            self.rcrm(batch)
+            with torch.cuda.amp.autocast():
+                self.rcrm(batch)
         end_time = time.perf_counter()
 
         # All timers
@@ -612,7 +621,7 @@ class PL_RCRM(pl.LightningModule):
             )
             logger.info("\n" + pprint.pformat(val_metrics_4tb))
             if self.dump_dir is not None:
-                np.save(Path(self.dump_dir) / "MAFF_pred_eval", dumps)
+                np.save(Path(self.dump_dir) / "rcrm_pred_eval", dumps)
 
         self.test_outputs.clear()
 
@@ -626,9 +635,7 @@ class PL_RCRM(pl.LightningModule):
         return avg
 
     def set_input_size(self, size=int):
-        print(f"Input Size: {size}")
-        if self.current_input_size == size:
-            return
+        print(f"Input Size: {size}", flush=True)
         if self.config.DATASET.TRAINVAL_DATA_SOURCE != "MegaDepth":
             return
         if self.trainer.state.fn == "fit" or self.trainer.state.fn == "validate":
@@ -638,3 +645,11 @@ class PL_RCRM(pl.LightningModule):
             if self.trainer.val_dataloaders is not None:
                 for d in self.trainer.val_dataloaders.dataset.datasets:
                     d.img_resize = size
+
+        self.rcrm.input_size = [size, size]
+        self.current_input_size = size
+
+    def wait_all(self):
+        temp = torch.zeros(1, device=self.device)
+        if dist.is_initialized():
+            dist.broadcast(temp, src=0)
