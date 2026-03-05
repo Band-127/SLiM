@@ -1,6 +1,7 @@
 *.log
 *.ckpt
 __pycache__/
+*/__pycache__/
 .vscode/
 dump/*
 logs/tb_logs/*

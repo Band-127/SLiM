@@ -1,12 +1,10 @@
 from loguru import logger
-
 import torch
-import torch.nn.functional as F
 from einops import repeat
 from kornia.utils import create_meshgrid
 from einops.einops import rearrange
-from src.utils.misc import create_grid
 
+from .misc import create_grid
 from .geometry import warp_kpts
 
 
@@ -152,48 +150,6 @@ def spvs_coarse(data, coarse_scale):
 
     data.update({"spv_b_ids": b_ids, "spv_i_ids": i_ids, "spv_j_ids": j_ids})
 
-    # 7. conf map supervision using gt depth
-    # 使用gt深度进行置信图监督
-    depth0 = data["depth0"]  # B, H, W
-    depth1 = data["depth1"]  # B, H, W
-    supervision_depth0 = []
-    supervision_depth1 = []
-    # Rescale depth using scale factor
-    for b_idx in range(N):
-        supervision_depth0.append(
-            F.interpolate(
-                (depth0[b_idx, None, None] > 0).float(),
-                scale_factor=(
-                    1 / scale0[b_idx][0, 0].item(),
-                    1 / scale0[b_idx][0, 1].item(),
-                ),
-                mode="bilinear",
-                align_corners=False,
-            )[0, 0, :h0, :w0]
-        )
-        supervision_depth1.append(
-            F.interpolate(
-                (depth1[b_idx, None, None] > 0).float(),
-                scale_factor=(
-                    1 / scale1[b_idx][0, 0].item(),
-                    1 / scale1[b_idx][0, 1].item(),
-                ),
-                mode="bilinear",
-                align_corners=False,
-            )[0, 0, :h1, :w1]
-        )
-    supervision_depth0 = torch.stack(supervision_depth0, dim=0)
-    supervision_depth1 = torch.stack(supervision_depth1, dim=0)
-    # Flatten B, Hc, Wc -> B, Lc=Hc*Wc
-    supervision_depth0 = rearrange(supervision_depth0, "b h w -> b (h w)")
-    supervision_depth1 = rearrange(supervision_depth1, "b h w -> b (h w)")
-    data.update(
-        {
-            "supervision_depth0": supervision_depth0,
-            "supervision_depth1": supervision_depth1,
-        }
-    )
-
 
 def compute_supervision_coarse(data, coarse_scale, config):
     assert len(set(data["dataset_name"])) == 1, (
@@ -202,8 +158,7 @@ def compute_supervision_coarse(data, coarse_scale, config):
     data_source = data["dataset_name"][0]
     if data_source.lower() in ["scannet", "megadepth"]:
         spvs_coarse(data, coarse_scale)
-        if config["MODEL"]["VERSION"] == "v1":
-            spvs_intermediate_v1(data, config)
+        spvs_intermediate(data, config)
     else:
         raise ValueError(f"Unknown data source: {data_source}")
 
@@ -259,7 +214,7 @@ def get_coarse_coord(data, config):
 
 
 @torch.no_grad
-def spvs_intermediate_v1(data, config):
+def spvs_intermediate(data, config):
     device = data["image0"].device
     N, _, H0, W0 = data["image0"].shape
     _, _, H1, W1 = data["image1"].shape
@@ -475,7 +430,7 @@ def spvs_intermediate_v1(data, config):
 
 ##############  ↓  Fine-Level supervision  ↓  ##############
 @torch.no_grad
-def spvs_fine_v1(data, config):
+def spvs_fine(data, config):
     """
     Update:
         data (dict):{
@@ -537,7 +492,6 @@ def spvs_fine_v1(data, config):
 def compute_supervision_fine(data, config):
     data_source = data["dataset_name"][0]
     if data_source.lower() in ["scannet", "megadepth"]:
-        if config["MODEL"]["VERSION"] == "v1":
-            spvs_fine_v1(data, config)
+        spvs_fine(data, config)
     else:
         raise NotImplementedError

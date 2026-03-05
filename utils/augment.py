@@ -88,7 +88,7 @@ class RCRMLiteAug(object):
                     saturation=0.15,
                     hue=0.25,
                 ),
-                A.ImageCompression(p=0.1, quality_lower=60, quality_upper=80),
+                A.ImageCompression(p=0.1, quality_lower=70, quality_upper=90),
                 A.ISONoise(p=0.1),
             ]
         )

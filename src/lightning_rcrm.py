@@ -16,39 +16,27 @@ import pytorch_lightning as pl
 from pytorch_lightning.profilers.profiler import Profiler
 from pytorch_lightning.profilers import PassThroughProfiler
 import torch.distributed as dist
-from contextlib import contextmanager
-import time
 
-from src.utils.supervision import compute_supervision_coarse, compute_supervision_fine
-from src.rcrm_v1 import RCRM_v1
+from src.rcrm import RCRM
 from src.loss import RCRM_Loss
+from src.utils.misc import CudaTimer
+from src.utils.supervision import compute_supervision_coarse, compute_supervision_fine
 from utils.metrics import (
     compute_symmetrical_epipolar_errors,
     compute_pose_errors,
     aggregate_metrics,
 )
+from utils.plotting import make_matching_figures
 from utils.comm import all_gather, gather
 from utils.misc import flattenList, print_params_summary
-from utils.plotting import make_matching_figures
-
 
 test_timer_list = [
     "feat_extract_time",
-    "fine_time",
-    "coarse_time",
-    "coarse_correlation_time",
-    "inter_correlation_time",
+    "upsample_time",
+    "coarse_match_time",
+    "fine_match_time",
     "refine_time",
 ]
-
-
-@contextmanager
-def sync_time():
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
-    yield
-    if torch.cuda.is_available():
-        torch.cuda.synchronize()
 
 
 def get_mean_time_across_ranks(local_time):
@@ -68,42 +56,24 @@ class PL_RCRM(pl.LightningModule):
         profiler: Profiler = None,
         dump_dir: str = None,
     ):
-        """_summary_
-
-        Args:
-            config (CN): root configuration
-            pretrained_ckpt (str, optional): Path to pretrained checkpoint if exists. Defaults to None.
-            profiler (Profiler, optional): Pytorch Lightning Profiler module. Defaults to None.
-            dump_dir (str, optional): Dir to dump testing output. Defaults to None.
-        """
-        super(PL_RCRM, self).__init__()
+        super().__init__()
 
         self.config = config
         self.pretrained_ckpt = pretrained_ckpt
         self.profiler = profiler or PassThroughProfiler()
         self.dump_dir = dump_dir
+
         self.num_devices = None
-        self.first_stage_epochs = config.TRAINER.FIRST_STAGE_EPOCHS
-        self.reparameter = False
-        self.show_gt_matched_fine_on_val = config.MODEL.SHOW_GT_MATCHED_FINE
         self.true_batch_size = (
-            config.LOADER.BATCH_SIZE * config.TRAINER.ACCUMULATE_GRAD_BATCHES
+            config.BATCH_SIZE * config.TRAINER.ACCUMULATE_GRAD_BATCHES
         )
-        self.max_input_size = config.IMAGE_SIZE
-        self.image_size_factor = config.IMAGE_SIZE_FACTOR
-        self.max_input_multiplier = int(self.max_input_size // self.image_size_factor)
-        self.min_input_multiplier = config.IMAGE_SIZE_MIN_MULT
-        self.val_input_size = config.VAL_IMAGE_SIZE
-        self.current_train_input_size = self.current_input_size = config.IMAGE_SIZE
+        self.amp = config.AMP
 
-        if config["MODEL"]["VERSION"] == "v1":
-            _RCRM = RCRM_v1
-        self.rcrm = _RCRM(config=config["MODEL"])
+        # Model
+        self.rcrm = RCRM(config=config["MODEL"])
         self.loss = RCRM_Loss(config=config["LOSS"])
-
-        # Set max coarse matches with batch size
-        self.rcrm.max_coarse_matches *= config.LOADER.BATCH_SIZE
-        self.rcrm.max_intermediate_matches *= config.LOADER.BATCH_SIZE
+        self.rcrm.max_coarse_matches *= config.BATCH_SIZE
+        self.rcrm.max_fine_matches *= config.BATCH_SIZE
 
         # Read pretrained checkpoint if exists
         if pretrained_ckpt:
@@ -111,11 +81,13 @@ class PL_RCRM(pl.LightningModule):
             self.rcrm.load_state_dict(state_dict, strict=True)
             logger.info(f"Load '{pretrained_ckpt}' as pretrained checkpoint")
 
-        # Coarse scale
-        self.coarse_scale = self.config.MODEL.COARSE_SCALE
+        self.coarse_scale = self.config.MODEL.COARSE_SCALE  # Coarse scale
         self.lr = self.config.TRAINER.TRUE_LR
 
-        self.training_outputs = []
+        self.n_vals_plot = max(
+            config.TRAINER.N_VAL_PAIRS_TO_PLOT // config.TRAINER.WORLD_SIZE, 1
+        )
+
         self.validation_outputs = []
         self.test_outputs = []
         self.train_forward_times = []
@@ -123,10 +95,6 @@ class PL_RCRM(pl.LightningModule):
         self.val_parts_times = {}
         self.test_forward_times = []
         self.test_parts_times = {}
-
-        self.n_vals_plot = max(
-            config.TRAINER.N_VAL_PAIRS_TO_PLOT // config.TRAINER.WORLD_SIZE, 1
-        )
 
     def configure_optimizers(self):
         # optimizer
@@ -157,17 +125,16 @@ class PL_RCRM(pl.LightningModule):
             )
 
         # learning rate scheduler
-        scheduler = {
-            "interval": self.config.TRAINER.SCHEDULER_INTERVAL,
-        }
+        scheduler = {}
         if self.config.TRAINER.SCHEDULER == "MultiStepLR":
             scheduler.update(
                 {
+                    "interval": "epoch",
                     "scheduler": MultiStepLR(
                         optimizer=optimizer,
                         milestones=self.config.TRAINER.MSLR_MILESTONES,
                         gamma=self.config.TRAINER.MSLR_GAMMA,
-                    )
+                    ),
                 }
             )
         elif self.config.TRAINER.SCHEDULER == "CosineAnnealing":
@@ -190,9 +157,10 @@ class PL_RCRM(pl.LightningModule):
         elif self.config.TRAINER.SCHEDULER == "ExponentialLR":
             scheduler.update(
                 {
+                    "interval": "epoch",
                     "scheduler": ExponentialLR(
                         optimizer=optimizer, gamma=self.config.TRAINER.ELR_GAMMA
-                    )
+                    ),
                 }
             )
         elif self.config.TRAINER.SCHEDULER == "CosineAnnealingWarmRestarts":
@@ -217,11 +185,12 @@ class PL_RCRM(pl.LightningModule):
             # Default: MultiStepLR
             scheduler.update(
                 {
+                    "interval": "epoch",
                     "scheduler": MultiStepLR(
                         optimizer=optimizer,
                         milestones=self.config.TRAINER.MSLR_MILESTONES,
                         gamma=self.config.TRAINER.MSLR_GAMMA,
-                    )
+                    ),
                 }
             )
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
@@ -267,9 +236,8 @@ class PL_RCRM(pl.LightningModule):
                 )
 
         with self.profiler.profile("Main forward"):
-            start_time = time.perf_counter()
-            self.rcrm(batch, training=training)
-            end_time = time.perf_counter()
+            with CudaTimer() as timer:
+                self.rcrm(batch, training=training)
 
         if training:
             with self.profiler.profile("Compute fine supervision"):
@@ -279,7 +247,7 @@ class PL_RCRM(pl.LightningModule):
                 self.loss(batch)
 
         # Timer
-        train_time = torch.tensor(end_time - start_time, device=self.device)
+        train_time = torch.tensor(timer.elapsed_time, device=self.device)
         mean_train_time = get_mean_time_across_ranks(train_time)
         batch.update({"forward_time": mean_train_time.item()})
         if training:
@@ -347,8 +315,6 @@ class PL_RCRM(pl.LightningModule):
                     self.global_step * self.num_devices * self.true_batch_size,
                 )
 
-            self.training_outputs.append(batch["loss"])
-
         return {"loss": batch["loss"]}
 
     def on_train_epoch_start(self):
@@ -357,41 +323,10 @@ class PL_RCRM(pl.LightningModule):
             if self.trainer.global_rank == 0:
                 print(self.rcrm)
                 print_params_summary(self.rcrm, recursive=False)
-            self.wait_all()
-            self.set_input_size(self.max_input_size)
-        elif self.trainer.current_epoch < self.first_stage_epochs:
-            # Random input size
-            if self.trainer.global_rank == 0:
-                input_size = torch.tensor(
-                    (
-                        self.max_input_multiplier
-                        - int(
-                            min(np.abs(np.random.randn(1)), 3)
-                            / 3
-                            * (self.max_input_multiplier - self.min_input_multiplier)
-                        )
-                    )
-                    * self.image_size_factor,
-                    dtype=torch.long,
-                    device=self.device,
-                )
-            else:
-                input_size = torch.zeros(1, dtype=torch.long, device=self.device)
-            if dist.is_initialized():
-                dist.broadcast(input_size, src=0)
-            self.wait_all()
-            self.set_input_size(input_size.item())
-        elif self.trainer.current_epoch >= self.first_stage_epochs:
-            self.loss.turn_off_conf_mask_loss = True
-            self.wait_all()
-            self.set_input_size(self.max_input_size)
         self.rcrm.train()
         self.rcrm.initial_forward()
 
     def on_train_epoch_end(self):
-        self.training_outputs.clear()
-        torch.cuda.empty_cache()
-
         # time
         if self.trainer.global_rank == 0 and len(self.train_forward_times) > 0:
             avg_forward_time = sum(self.train_forward_times) / len(
@@ -404,7 +339,7 @@ class PL_RCRM(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
-            self._trainval_inference(batch, training=self.show_gt_matched_fine_on_val)
+            self._trainval_inference(batch, training=False)
 
         # All timers
         keys = test_timer_list
@@ -431,7 +366,6 @@ class PL_RCRM(pl.LightningModule):
         )
 
     def on_validation_epoch_start(self):
-        self.set_input_size(self.val_input_size)
         self.rcrm.eval()
         self.rcrm.initial_forward()
 
@@ -458,7 +392,6 @@ class PL_RCRM(pl.LightningModule):
                 k: flattenList(all_gather(flattenList([_me[k] for _me in _metrics])))
                 for k in _metrics[0]
             }
-            # NOTE: all ranks need to `aggregate_merics`, but only log at rank-0
             val_metrics_4tb = aggregate_metrics(
                 metrics, self.config.TRAINER.EPI_ERR_THR
             )
@@ -524,20 +457,12 @@ class PL_RCRM(pl.LightningModule):
         self.validation_outputs.clear()
         torch.cuda.empty_cache()
 
-    def on_test_epoch_start(self):
-        if not self.reparameter:
-            self.rcrm.reparameter()
-            self.reparameter = True
-        self.rcrm.eval()
-        self.rcrm.initial_forward()
-
     def test_step(self, batch: dict, batch_idx):
         # inference
-        start_time = time.perf_counter()
         with torch.inference_mode(True):
-            with torch.cuda.amp.autocast():
-                self.rcrm(batch)
-        end_time = time.perf_counter()
+            with torch.cuda.amp.autocast(enabled=self.amp):
+                with CudaTimer() as timer:
+                    self.rcrm(batch)
 
         # All timers
         keys = test_timer_list
@@ -548,7 +473,7 @@ class PL_RCRM(pl.LightningModule):
                 self.test_parts_times[key].append(batch[key])
 
         # Timer
-        local_time = torch.tensor(end_time - start_time, device=self.device)
+        local_time = torch.tensor(timer.elapsed_time, device=self.device)
         mean_time = get_mean_time_across_ranks(local_time)
         batch.update({"forward_time": mean_time.item()})
         self.test_forward_times.append(mean_time.item())
@@ -559,7 +484,6 @@ class PL_RCRM(pl.LightningModule):
 
         # dump results
         keys_to_save = {"fine_coord_0", "fine_coord_1", "epi_errs"}
-
         pair_names = list(zip(*batch["pair_names"]))
         bs = batch["image0"].shape[0]
         dumps = []
@@ -577,6 +501,10 @@ class PL_RCRM(pl.LightningModule):
         ret_dict["dumps"] = dumps
 
         self.test_outputs.append(ret_dict)
+
+    def on_test_epoch_start(self):
+        self.rcrm.eval()
+        self.rcrm.initial_forward()
 
     def on_test_epoch_end(self):
         with torch.inference_mode(False):
@@ -597,7 +525,6 @@ class PL_RCRM(pl.LightningModule):
                 logger.info(
                     f"Prediction and evaluation results will be saved to: {self.dump_dir}"
                 )
-
         if self.trainer.global_rank == 0:
             # time
             if len(self.test_forward_times) > 0:
@@ -622,7 +549,6 @@ class PL_RCRM(pl.LightningModule):
             logger.info("\n" + pprint.pformat(val_metrics_4tb))
             if self.dump_dir is not None:
                 np.save(Path(self.dump_dir) / "rcrm_pred_eval", dumps)
-
         self.test_outputs.clear()
 
     @staticmethod
@@ -633,23 +559,3 @@ class PL_RCRM(pl.LightningModule):
         trimmed_list = sorted_list[trim_count:-trim_count]
         avg = sum(trimmed_list) / len(trimmed_list)
         return avg
-
-    def set_input_size(self, size=int):
-        print(f"Input Size: {size}", flush=True)
-        if self.config.DATASET.TRAINVAL_DATA_SOURCE != "MegaDepth":
-            return
-        if self.trainer.state.fn == "fit" or self.trainer.state.fn == "validate":
-            if self.trainer.train_dataloader is not None:
-                for d in self.trainer.train_dataloader.dataset.datasets:
-                    d.img_resize = size
-            if self.trainer.val_dataloaders is not None:
-                for d in self.trainer.val_dataloaders.dataset.datasets:
-                    d.img_resize = size
-
-        self.rcrm.input_size = [size, size]
-        self.current_input_size = size
-
-    def wait_all(self):
-        temp = torch.zeros(1, device=self.device)
-        if dist.is_initialized():
-            dist.broadcast(temp, src=0)

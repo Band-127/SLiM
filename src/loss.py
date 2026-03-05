@@ -13,21 +13,16 @@ class RCRM_Loss(nn.Module):
         super(RCRM_Loss, self).__init__()
 
         self.config = config
-        self.turn_off_conf_mask_loss = not self.config["CONF_MASK_DEPTH_REFINEMENT"]
         self.coarse_weight = self.config["COARSE_WEIGHT"]
-        self.coarse_percent = self.config["COARSE_PERCENT"]
-        self.intermediate_weight = self.config["INTERMEDIATE_WEIGHT"]
-        self.fine_weight = self.config["FINE_WEIGHT"]
-        self.iter_decay_gamma = self.config["ITER_DECAY_GAMMA"]
-        self.version = self.config["VERSION"]
         self.coarse_gamma = self.config["FOCAL_GAMMA_COARSE"]
-        self.intermediate_gamma = self.config["FOCAL_GAMMA_INTERMEDIATE"]
-        self.fine_type = self.config["FINE_TYPE"]
-        self.fine_loss_func = {
-            "l2": self._compute_fine_loss_l2,
-            "l1": self._compute_fine_loss_l1,
-            "huber": self._compute_fine_loss_huber,
-        }[self.fine_type]
+        self.coarse_percent = self.config["COARSE_PERCENT"]
+
+        self.fine_weight = self.config["FINE_WEIGHT"]
+        self.fine_gamma = self.config["FOCAL_GAMMA_FINE"]
+
+        self.refine_weight = self.config["REFINE_WEIGHT"]
+        self.refine_thres = self.config["REFINE_THRES"]
+        self.iter_decay_gamma = self.config["ITER_DECAY_GAMMA"]
 
     def compute_coarse_loss(self, data):
         conf = data["sim_matrix"]
@@ -68,34 +63,6 @@ class RCRM_Loss(nn.Module):
                 * torch.clamp_min(pos_conf, 1e-6).log()
             )
 
-        # conf = data["conf_matrix"]
-        # conf_gt = data["conf_matrix_f"]
-
-        # # 0. Compute element-wise loss weight and pos neg mask
-        # weight = self._compute_c_weight(data)
-        # pos_mask = conf_gt == 1
-        # # corner case: no gt coarse-level match at all
-        # if not pos_mask.any():  # assign a wrong gt
-        #     conf_gt = conf
-        #     loss = (conf - conf_gt).mean()
-        #     return loss
-
-        # with torch.no_grad():
-        #     b, i, j = torch.where(conf_gt == 1)
-        #     N = b.shape[0]
-        #     actual_count = int(N * self.coarse_percent)
-        #     idx_set_zero = torch.randperm(N, device=conf_gt.device)[actual_count:]
-        #     pos_mask[b[idx_set_zero], i[idx_set_zero], j[idx_set_zero]] = 0
-
-        # # 1. Compute loss for similarity matrix in coarse matching
-        # # Focal Loss
-        # gamma = self.coarse_gamma
-
-        # pos_conf = conf[pos_mask]
-        # loss = (
-        #     -1 * torch.pow(1 - pos_conf, gamma) * torch.clamp_min(pos_conf, 1e-6).log()
-        # )
-
         # handle loss weights
         if weight is not None:
             # Different from dense-spvs, the loss w.r.t. padded regions aren't directly zeroed out,
@@ -103,24 +70,23 @@ class RCRM_Loss(nn.Module):
             loss = loss * weight[b_pos, i_pos, j_pos]
         loss = loss.mean()
 
-        # 2. Compute loss for confidence mask with gt depth map(binary classification for background/foreground)
-        if not self.turn_off_conf_mask_loss:
-            loss += self._compute_conf_loss(data)
-
         return loss
 
-    def compute_fine_loss_v1(self, data):
+    def compute_fine_loss(self, data):
         # 1. Compute FOCAL loss for similarity matrix in fine matching
         conf_matrix_f = data["conf_matrix_f"]
         conf_matrix_f_gt = data["conf_matrix_f_gt"]
         pos_mask = conf_matrix_f_gt == 1
-        gamma = self.intermediate_gamma
+        gamma = self.fine_gamma
         pos_conf = conf_matrix_f[pos_mask]
-        loss_f1 = (
+        loss = (
             -1 * torch.pow(1 - pos_conf, gamma) * torch.clamp_min(pos_conf, 1e-6).log()
         ).mean()
 
-        # 2. Compute L2 loss for offset prediction in fine matching
+        return loss
+
+    def compute_refine_loss(self, data):
+        # Compute L2 loss for offset prediction in fine matching
         offset = data["all_offset_1"]  # [ITER, M, 2]
         offset_gt = data["coord_offset_gt"]  # [M, 2]
         # correct_mask tells you which pair to compute fine-loss
@@ -128,21 +94,21 @@ class RCRM_Loss(nn.Module):
 
         # corner case: no correct fine match found
         if not correct_mask.any():
-            loss_f2 = None
+            loss = None
         else:
-            loss_f2 = torch.tensor(0.0, device=offset.device)
+            loss = torch.tensor(0.0, device=offset.device)
             iters = offset.shape[0]
             total_offset = torch.zeros_like(offset[0])
 
             for i in range(iters):
-                loss_f2 += self.iter_decay_gamma ** (
+                loss += self.iter_decay_gamma ** (
                     iters - i - 1
-                ) * self.fine_loss_func(
+                ) * self._compute_fine_loss_l2(
                     offset[i] + total_offset, offset_gt, correct_mask
                 )
                 with torch.no_grad():
                     total_offset += offset[i].detach()
-        return loss_f1, loss_f2
+        return loss
 
     def _compute_fine_loss_l2(self, coord_offset_f, coord_offset_f_gt, correct_mask):
         """
@@ -157,41 +123,6 @@ class RCRM_Loss(nn.Module):
         ).sum(-1)
         return offset_l2.mean()
 
-    def _compute_fine_loss_l1(self, coord_offset_f, coord_offset_f_gt, correct_mask):
-        offset_l1 = (
-            (coord_offset_f_gt[correct_mask] - coord_offset_f[correct_mask]).abs()
-        ).sum(-1)
-        return offset_l1.mean()
-
-    def _compute_fine_loss_huber(self, coord_offset_f, coord_offset_f_gt, correct_mask):
-        offset_smooth_l1 = (
-            F.huber_loss(
-                coord_offset_f[correct_mask],
-                coord_offset_f_gt[correct_mask],
-                reduction="mean",
-                delta=0.1,
-            )
-            * 2
-        )
-        return offset_smooth_l1
-
-    def _compute_conf_loss(self, data):
-        """
-        L2 loss between confidence mask and gt depth map
-        Args:
-            data (dict): input data
-        """
-        conf_mask0 = data["conf_mask0"]
-        conf_mask1 = data["conf_mask1"]
-        supervision_depth0 = data["supervision_depth0"]
-        supervision_depth1 = data["supervision_depth1"]
-
-        loss = ((conf_mask0 - supervision_depth0) ** 2).mean() + (
-            (conf_mask1 - supervision_depth1) ** 2
-        ).mean()
-
-        return 0.5 * loss
-
     @torch.no_grad
     def _compute_c_weight(self, data):
         if "mask0" in data:
@@ -204,7 +135,7 @@ class RCRM_Loss(nn.Module):
             c_weight = None
         return c_weight
 
-    def forward_v1(self, data):
+    def forward(self, data):
         """
         Update:
             data (dict): update{
@@ -213,12 +144,9 @@ class RCRM_Loss(nn.Module):
             }
         """
         loss_scalars = {}
-        # Get conf matrix from sim matrix using dual softmax operator
-        # sim_matrix = data["sim_matrix"]
+        # Get conf matrix from sim matrix using dual softmax operator, fine only, as the coarse one will conduct partial softmax
         sim_matrix_f = data["sim_matrix_f"]
-        # conf_matrix = F.softmax(sim_matrix, 1) * F.softmax(sim_matrix, 2)
         conf_matrix_f = F.softmax(sim_matrix_f, 1) * F.softmax(sim_matrix_f, 2)
-        # data.update({"conf_matrix": conf_matrix})
         data.update({"conf_matrix_f": conf_matrix_f})
         loss = torch.tensor(0.0, device=conf_matrix_f.device)
 
@@ -231,21 +159,20 @@ class RCRM_Loss(nn.Module):
             loss_scalars.update({"loss_c": torch.tensor(0.0).clone().detach().cpu()})
 
         # 2. Fine-level loss
-        loss_f1, loss_f2 = self.compute_fine_loss_v1(data=data)
-        if loss_f1 is not None and loss_f1.item() != torch.nan:
-            loss += loss_f1 * self.intermediate_weight
-            loss_scalars.update({"loss_f1": loss_f1.clone().detach().cpu() * 0.25})
+        loss_f = self.compute_fine_loss(data=data)
+        if loss_f is not None and loss_f.item() != torch.nan:
+            loss += loss_f * self.fine_weight
+            loss_scalars.update({"loss_f": loss_f.clone().detach().cpu() * 0.25})
         else:
-            loss_scalars.update({"loss_f1": torch.tensor(0.0).clone().detach().cpu()})
-        if loss_f2 is not None and loss_f2.item() != torch.nan:
-            loss += loss_f2 * self.fine_weight
-            loss_scalars.update({"loss_f2": loss_f2.clone().detach().cpu()})
+            loss_scalars.update({"loss_f": torch.tensor(0.0).clone().detach().cpu()})
+
+        # 3. Refinement loss
+        loss_rf = self.compute_refine_loss(data=data)
+        if loss_rf is not None and loss_rf.item() != torch.nan:
+            loss += loss_rf * self.refine_weight
+            loss_scalars.update({"loss_rf": loss_rf.clone().detach().cpu()})
         else:
-            loss_scalars.update({"loss_f2": torch.tensor(0.0).clone().detach().cpu()})
+            loss_scalars.update({"loss_rf": torch.tensor(0.0).clone().detach().cpu()})
 
         # 3. Total loss
         data.update({"loss": loss, "loss_scalars": loss_scalars})
-
-    def forward(self, data):
-        if self.version == "v1":
-            self.forward_v1(data)
