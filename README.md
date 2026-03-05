@@ -1,5 +1,5 @@
 # SoMa: Scalable Feature Matching via State Space Modeling and Sparse Correlation (CVPR 2026)
-> Choo Sin Wai, Bo Li\* 
+> Choo Sin Wai, Bo Li\* \
 > \* corresponding author
 
 <p align="center">
