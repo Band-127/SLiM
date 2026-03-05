@@ -1,37 +1,73 @@
 import os
 import random
 from datetime import datetime
-
 from yacs.config import CfgNode as CN
 
 _CN = CN()
 
 ########    General Configurations    ########
-_CN.DEBUG = False
-_CN.OVERALL_MODE = "train"          # options: ["train", "test"]
-_CN.GLOBAL_SEED = 66                # for reproducibility, None for random
-_CN.IMAGE_SIZE = 640
-_CN.VAL_IMAGE_SIZE = 640
-_CN.IMAGE_SIZE_FACTOR = 32
-_CN.IMAGE_SIZE_MIN_MULT = 25        # e.g. 20: 640 = 20 * 32(IMAGE_SIZE_FACTOR), minimum input_size = 640
+_CN.GLOBAL_SEED = 66
 _CN.DTYPE = "float32"
+_CN.RGB_INPUT = False               # True if input channel == 3, False if input channel == 1
+_CN.MODE = "outdoor_test"           # options: ["outdoor_train", "outdoor_test", "indoor_train", "indoor_test"]
 _CN.PRETRAINED_PATH = None
-_CN.DUMP_DIR = "dump/rcrm_baseline_outdoor"
+_CN.REFINE_ITERS = 4
+_CN.BATCH_SIZE = 1
+_CN.COARSE_SCALE_IDX = 2            # 1/8
+_CN.FINE_SCALE_IDX = 0              # 1/2
+_CN.MAX_COARSE_MATCHES = {
+    "outdoor_train": 6000,
+    "outdoor_test": 6000,
+    "indoor_train": 600,
+    "indoor_test": 600,
+}[_CN.MODE]
+_CN.MAX_FINE_MATCHES = {
+    "outdoor_train": 6000,
+    "outdoor_test": 6000,
+    "indoor_train": 600,
+    "indoor_test": 4800,
+}[_CN.MODE]
+_CN.IMAGE_SIZE = {
+    "outdoor_train": 1024,
+    "outdoor_test": 1184,
+    "indoor_train": 640,
+    "indoor_test": 640,
+}[_CN.MODE]
+_CN.COARSE_THRES = {
+    "outdoor_train": 0.1,
+    "outdoor_test": 0.1,
+    "indoor_train": 0.1,
+    "indoor_test": 0.0005,
+}[_CN.MODE]
+_CN.FINE_THRES = {
+    "outdoor_train": 0.1,
+    "outdoor_test": 0.03,
+    "indoor_train": 0.1,
+    "indoor_test": 0.0005,
+}[_CN.MODE]
+_CN.DUMP_DIR = {
+    "outdoor_train": None,
+    "outdoor_test": f"dump/rcrm_outdoor_I{_CN.REFINE_ITERS}",
+    "indoor_train": None,
+    "indoor_test": f"dump/rcrm_indoor_I{_CN.REFINE_ITERS}",
+}[_CN.MODE]
+_CN.RANSAC_TIMES = 5
+_CN.OPTIMIZED_DUAL_SOFTMAX = False
+_CN.AMP = True
 
 ########    Device Configurations    ########
-# Support CUDA/CPU only!!!
+# Support CUDA only!!!
 _CN.DEVICE = CN()
 _CN.DEVICE.ENABLE_GPU = True                    # Whether enable GPUs, default true
 _CN.DEVICE.ENABLE_DDP = True                    # Whether enable distributed data parallel, default true
-_CN.DEVICE.GPU_IDX = "2,3,4,5,6,7"          # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
+_CN.DEVICE.GPU_IDX = "4,5,6,7"              # GPUs indices, e.g. "0,1,2,3,4,5,6,7"
 _CN.DEVICE.NUM_NODES = 1
 _CN.DEVICE.MASTER_ADDR = "localhost"
 _CN.DEVICE.MASTER_PORT = "29500"
-_CN.BATCH_SIZE = 1
 
 ########    Dataset Configurations    ########
 _CN.DATASET = CN()
-_CN.DATASET.DATA_SOURCE = "MegaDepth"                                                                       # options: ["ScanNet", "MegaDepth"]
+_CN.DATASET.DATA_SOURCE = "MegaDepth" if "outdoor" in _CN.MODE else "ScanNet"
 if _CN.DATASET.DATA_SOURCE == "MegaDepth":
     """
     MegaDepth
@@ -89,7 +125,6 @@ elif _CN.DATASET.DATA_SOURCE == "ScanNet":
     _CN.DATASET.TEST_NPZ_ROOT = f"{_CN.DATASET.TEST_DATA_BASE_PATH}//index/scene_data/val_list"
     _CN.DATASET.TEST_LIST_PATH = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/index/scene_data/val_list/scannet_test.txt"# None if test data from all scenes are bundled into a single npz file
     _CN.DATASET.TEST_INTRINSIC_PATH = f"{_CN.DATASET.TEST_DATA_BASE_PATH}/index/scene_data/val_list/intrinsics.npz"
-
 # general options
 _CN.DATASET.PARALLEL_WORKERS_NUM = 16
 _CN.DATASET.MIN_OVERLAP_SCORE_TRAIN = 0.0           # discard data with overlap_score < min_overlap_score
@@ -115,15 +150,57 @@ _CN.LOADER.BATCH_SIZE = _CN.BATCH_SIZE              # how many samples per batch
 _CN.LOADER.NUM_WORKERS = 4                          # how many subprocesses to use for data loading.
 _CN.LOADER.PIN_MEMORY = True                        # If True, the data loader will copy Tensors into device/CUDA pinned memory before returning them.
 
+########    Model Configurations    ########
+_CN.MODEL = CN()
+_CN.MODEL.REFINE_ITERS = _CN.REFINE_ITERS
+_CN.MODEL.REFINE_LOOKUP_RADIUS = 3
+_CN.MODEL.COARSE_SCALE = None
+_CN.MODEL.COARSE_SCALE_IDX = _CN.COARSE_SCALE_IDX
+_CN.MODEL.FINE_SCALE_IDX = _CN.FINE_SCALE_IDX
+_CN.MODEL.MAX_COARSE_MATCHES = _CN.MAX_COARSE_MATCHES
+_CN.MODEL.MAX_FINE_MATCHES = _CN.MAX_FINE_MATCHES
+_CN.MODEL.COARSE_THRES = _CN.COARSE_THRES
+_CN.MODEL.FINE_THRES = _CN.FINE_THRES
+_CN.MODEL.TRAIN_NOISE_SCALE = 0.8
+_CN.MODEL.OPTIMIZED_DUAL_SOFTMAX = _CN.OPTIMIZED_DUAL_SOFTMAX
+# Backbone
+_CN.MODEL.BACKBONE = CN()
+_CN.MODEL.BACKBONE.RGB_INPUT = _CN.RGB_INPUT
+_CN.MODEL.BACKBONE.PATCH_SIZE = 2
+_CN.MODEL.BACKBONE.DIMS = [48, 96, 192]
+_CN.MODEL.BACKBONE.DEPTHS = [1, 1, 1]
+_CN.MODEL.BACKBONE.EXTRA_DEPTH = 2
+_CN.MODEL.BACKBONE.EXTRA_AGGREGATION = 4
+_CN.MODEL.BACKBONE.CONV_KERNEL_SIZE = 7
+_CN.MODEL.FINE_DIM = _CN.MODEL.BACKBONE.DIMS[_CN.FINE_SCALE_IDX]
+_CN.MODEL.COARSE_DIM = _CN.MODEL.BACKBONE.DIMS[_CN.COARSE_SCALE_IDX]
+# Refinement
+_CN.MODEL.REFINEMENT = CN()
+_CN.MODEL.REFINEMENT.HIDDEN_DIM = 32
+_CN.MODEL.REFINEMENT.CONTEXT_INJECTION = True
+
+########    Loss Configurations    ########
+_CN.LOSS = CN()
+# COARSE MATCHING
+_CN.LOSS.COARSE_WEIGHT = 0.25
+_CN.LOSS.FOCAL_GAMMA_COARSE = 2.0
+_CN.LOSS.COARSE_PERCENT = 0.9
+# FINE MATCHING
+_CN.LOSS.FINE_WEIGHT = 0.2
+_CN.LOSS.FOCAL_GAMMA_FINE = 2.0
+# REFINEMENT
+_CN.LOSS.REFINE_WEIGHT = 1.0
+_CN.LOSS.REFINE_THRES = 1.0
+_CN.LOSS.ITER_DECAY_GAMMA = 0.8
+
 ########    Trainer Configurations    ########
 _CN.TRAINER = CN()
 _CN.TRAINER.WORLD_SIZE = None                       # Will be calculated using number of nodes and exact number of devices available
 _CN.TRAINER.GRADIENT_CLIPPING = 0.8                 # Gradient clipping
-_CN.TRAINER.CANONICAL_BS = 6
+_CN.TRAINER.CANONICAL_BS = 8
 _CN.TRAINER.CANONICAL_LR = 1e-3                     # using LR finder provided by pytorch lightning if FIND_LR set to True
 _CN.TRAINER.SCALING = None                          # this will be calculated automatically
 _CN.TRAINER.FIND_LR = False                         # use learning rate finder from pytorch-lightning, TODO: fix lr finder
-_CN.TRAINER.FIRST_STAGE_EPOCHS = 0                  # first stage epochs
 # gradient accumulation
 _CN.TRAINER.ACCUMULATE_GRAD_BATCHES = 1
 # optimizer
@@ -146,217 +223,50 @@ _CN.TRAINER.COSAWR_ETAMIN = 1e-12
 # step-based warm-up
 _CN.TRAINER.WARMUP_TYPE = 'linear'                      # options: [linear, constant]
 _CN.TRAINER.WARMUP_RATIO = 0.01
-_CN.TRAINER.WARMUP_STEP = 15000                         # in steps
+_CN.TRAINER.WARMUP_STEP = 18400                         # in steps
 # plotting related
 _CN.TRAINER.ENABLE_PLOTTING = True
-_CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 64                    # number of val/test paris for plotting
+_CN.TRAINER.N_VAL_PAIRS_TO_PLOT = 10                    # number of val/test paris for plotting
 _CN.TRAINER.PLOT_MODE = 'evaluation'                    # ['evaluation', 'confidence']
 _CN.TRAINER.PLOT_MATCHES_ALPHA = 'dynamic'
 # For metric calculation
-_CN.TRAINER.RANSAC_PIXEL_THR = 0.5
+_CN.TRAINER.RANSAC_PIXEL_THR = 0.275
 _CN.TRAINER.RANSAC_CONF = 0.99999
-_CN.TRAINER.RANSAC_TIMES = 1
+_CN.TRAINER.RANSAC_TIMES = _CN.RANSAC_TIMES
 _CN.TRAINER.EPI_ERR_THR = 5e-4 if _CN.DATASET.TRAINVAL_DATA_SOURCE == "ScanNet" else 1e-4   # recommendation: 5e-4 for ScanNet, 1e-4 for MegaDepth (from SuperGlue)
 
-########    Logging Configurations    ########
-_CN.LOGGER = CN()
-_CN.LOGGER.EXP_NAME = f"{datetime.isoformat(datetime.now(), sep='-', timespec='seconds')}"
-
-########    Profiler Configurations    ########
-_CN.PROFILER = CN()
-_CN.PROFILER.PROFILER__NAME = None                  # options: [None, "inference", "pytorch"], defaults: None
-
-########    Model Configurations    ########
-_CN.MODEL = CN()
-_CN.MODEL.DEBUG = _CN.DEBUG
-_CN.MODEL.SHOW_GT_MATCHED_FINE = False
-_CN.MODEL.DTYPE = _CN.DTYPE
-_CN.MODEL.VERSION = "v1"                            # options: ["v1"]
-_CN.MODEL.DIMENSION = 192
-_CN.MODEL.FINE_DIMENSION = 48                       # Default: 64
-_CN.MODEL.REFINE_ITERS = 4
-_CN.MODEL.REFINE_LOOKUP_RADIUS = 3
-_CN.MODEL.USING_MAMBA2 = True
-_CN.MODEL.BATCH_SIZE = _CN.BATCH_SIZE
-_CN.MODEL.SIZE_CHANGEABLE = True if _CN.DATASET.TRAINVAL_DATA_SOURCE == "MegaDepth" else False
-# will be calculated automatically based on backbone
-_CN.MODEL.COARSE_SCALE_IDX = 1
-_CN.MODEL.COARSE_SCALE = None                       
-_CN.MODEL.FINE_SCALE_IDX = 0
-_CN.MODEL.FINE_SCALE = None
-# refinement
-_CN.MODEL.DISABLE_PE = True                         # Whether using pe before encoder or not
-_CN.MODEL.CONF_MASK_DEPTH_REFINEMENT = False        # Whether using depth map to refine conf mask(generate confidence mask from output feature using mlp to mask unwanted area in correlation)
-
-# Feature Backbone
-_CN.MODEL.BACKBONE = CN()
-_CN.MODEL.BACKBONE.BACKBONE_TYPE = "ConvVMamba"
-_CN.MODEL.BACKBONE.VMAMBA_PRETRAINED = False
-# backbone options: 
-# [
-#   "ResNet18", "ResNet18_modified", "ResNet18_pretrained",                         <-- ResNet in LoFTR, changed batchnorm into layernorm, original ResNet and pretrained weights
-#   "VMamba_T", "VMamba_S", "VMamba_B",                                             <-- means pretrained, patch size = 4, 1/2 is extracted after patch embedding with a pixel shuffle(x2)
-#   "VMamba_T_modified", "VMamba_S_modified", "VMamba_B_modified",                  <-- means non pretrained, patch size = 2
-#   "ResNet18_pretrained_FPN" , "VMamba_T_FPN", "VMamba_S_FPN", "VMamba_B_FPN",     <-- pretrained and with FPN
-#   "VMamba_T_cropped", "VMamba_S_cropped", "VMamba_B_cropped",                     <-- pretrained without last two layers, 1/2 is extracted after patch embedding with a pixel shuffle(x2)
-#   "VMamba_T_cropped_FPN"
-#   "VMamba_T_cropped_concat", "VMamba_T_cropped_concat_FPN"
-#   "ConvVMamba"
-#   "RepVGG", "RepVGG_FPN", "RepVGG_cropped"                                        <-- first two normal RepVGG, the last one is same as Efficient LoFTR, which patch size = 2
-#   "RepVGG_pretrained", "RepVGG_pretrained_FPN", "RepVGG_pretrained_cropped"       <-- pretrained, add a fpn, without last two layers
-# ]
-# Efficient LoFTR using RepVGG_cropped
-_CN.MODEL.BACKBONE.RESOLUTION = (4, 8, 16, 32)                          # options: [(2, 4, 8), (2, 4, 8, 16)] for ResNet18 and ResNet18_modified, will automatically set for ResNet18_pretrained and VMamba
-_CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256, 512)                     # options: (128, 196, 256)(Modified by LoFTR), will automatically set for ResNet18_pretrained and VMamba
-_CN.MODEL.BACKBONE.INPUT_SIZE = [_CN.IMAGE_SIZE, _CN.IMAGE_SIZE] if _CN.DATASET.DATA_SOURCE == "MegaDepth" else [480, 640]
-_CN.MODEL.BACKBONE.FPN_OUT_CHANNELS = _CN.MODEL.DIMENSION
-
-# Coarse Encoder
-_CN.MODEL.COARSE_ENCODER = CN()
-_CN.MODEL.COARSE_ENCODER.NUM_LAYERS = 2
-_CN.MODEL.COARSE_ENCODER.INNER_EXPANSION = 2
-_CN.MODEL.COARSE_ENCODER.CONV_DIM = 3
-_CN.MODEL.COARSE_ENCODER.DELTA = 4
-_CN.MODEL.COARSE_ENCODER.USING_MAMBA2 = _CN.MODEL.USING_MAMBA2
-_CN.MODEL.COARSE_ENCODER.DROP_RATE = 0.01
-
-# Fine Encoder
-_CN.MODEL.FINE_ENCODER = CN()
-_CN.MODEL.FINE_ENCODER.NUM_LAYERS = 0
-_CN.MODEL.FINE_ENCODER.DROP_RATE = 0.05
-
-# Coarse matching
-_CN.MODEL.COARSE_MATCHING = CN()
-_CN.MODEL.COARSE_MATCHING.THRESHOLD = 0.08
-_CN.MODEL.COARSE_MATCHING.MAX_MATCHES = 6000
-
-# Intermediate matching
-_CN.MODEL.INTERMEDIATE_MATCHING = CN()
-_CN.MODEL.INTERMEDIATE_MATCHING.THRESHOLD = 0.08
-_CN.MODEL.INTERMEDIATE_MATCHING.MAX_MATCHES = 8000
-_CN.MODEL.INTERMEDIATE_MATCHING.TRAIN_NOISE_SCALE = 0.75
-
-# Refinement
-_CN.MODEL.REFINEMENT = CN()
-_CN.MODEL.REFINEMENT.HIDDEN_DIM = 32
-_CN.MODEL.REFINEMENT.CONTEXT_INJECTION = True
-
-########    Loss Configurations    ########
-_CN.LOSS = CN()
-_CN.LOSS.VERSION = _CN.MODEL.VERSION
-# COARSE MATCHING
-_CN.LOSS.COARSE_WEIGHT = 0.25
-_CN.LOSS.FOCAL_GAMMA_COARSE = 2.0
-_CN.LOSS.COARSE_PERCENT = 0.9
-# INTERMEDIATE MATCHING
-_CN.LOSS.INTERMEDIATE_WEIGHT = 0.2
-_CN.LOSS.FOCAL_GAMMA_INTERMEDIATE = 2.0
-# FINE MATCHING
-_CN.LOSS.FINE_WEIGHT = 1.0
-_CN.LOSS.FINE_TYPE = 'l2'                        # options: ['l2', 'l1', 'huber']
-_CN.LOSS.FINE_THR = 1.0
-_CN.LOSS.ITER_DECAY_GAMMA = 0.8
-# CONFIDENCE MASK REFINEMENT
-_CN.LOSS.CONF_MASK_DEPTH_REFINEMENT = _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT
-
-########    Profiler Configurations    ########
-_CN.PROFILER = CN()
-_CN.PROFILER.PROFILER_NAME = None                   # options: [None, "inference", "pytorch"], Default: None -> PassThroughProfiler
-
-# Set model backbone settings for VMamba and pretrained ResNet18
-if "VMamba_T" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-    if "modified" not in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
-        _CN.MODEL.BACKBONE.LAYER_DIMS = (24, 96, 192, 384, 768)
-        _CN.MODEL.COARSE_SCALE_IDX = 2
-        _CN.MODEL.FINE_SCALE_IDX = 0
-    else:
-        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
-        _CN.MODEL.BACKBONE.LAYER_DIMS = (48, 96, 192)
-        _CN.MODEL.COARSE_SCALE_IDX = 2
-        _CN.MODEL.FINE_SCALE_IDX = 0
-elif "VMamba_S" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-    if "modified" not in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
-        _CN.MODEL.BACKBONE.LAYER_DIMS = (24, 96, 192, 384, 768)
-        _CN.MODEL.COARSE_SCALE_IDX = 2
-        _CN.MODEL.FINE_SCALE_IDX = 0
-    else:
-        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
-        _CN.MODEL.BACKBONE.LAYER_DIMS = (48, 96, 192)
-        _CN.MODEL.COARSE_SCALE_IDX = 2
-        _CN.MODEL.FINE_SCALE_IDX = 0
-elif "VMamba_B" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-    if "modified" not in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
-        _CN.MODEL.BACKBONE.LAYER_DIMS = (32, 128, 256, 512, 1024)
-        _CN.MODEL.COARSE_SCALE_IDX = 2
-        _CN.MODEL.FINE_SCALE_IDX = 0
-    else:
-        _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
-        _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256)
-        _CN.MODEL.COARSE_SCALE_IDX = 2
-        _CN.MODEL.FINE_SCALE_IDX = 0
-elif "ResNet18_pretrained" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 64, 128, 256, 512)
-    _CN.MODEL.COARSE_SCALE_IDX = 2
-    _CN.MODEL.FINE_SCALE_IDX = 0
-elif "RepVGG" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8, 16, 32)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 64, 128, 256, 1280)
-    _CN.MODEL.COARSE_SCALE_IDX = 2
-    _CN.MODEL.FINE_SCALE_IDX = 0
-if "cropped" in _CN.MODEL.BACKBONE.BACKBONE_TYPE:
-    _CN.MODEL.BACKBONE.RESOLUTION = _CN.MODEL.BACKBONE.RESOLUTION[0: len(_CN.MODEL.BACKBONE.RESOLUTION) - 2]
-    _CN.MODEL.BACKBONE.LAYER_DIMS = _CN.MODEL.BACKBONE.LAYER_DIMS[0: len(_CN.MODEL.BACKBONE.LAYER_DIMS) - 2]
-if _CN.MODEL.BACKBONE.BACKBONE_TYPE == "RepVGG_cropped":
-    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 128, 256)
-    _CN.MODEL.COARSE_SCALE_IDX = 2
-    _CN.MODEL.FINE_SCALE_IDX = 0
-elif _CN.MODEL.BACKBONE.BACKBONE_TYPE == "RepVGG_pretrained_cropped":
-    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (64, 64, 128)
-    _CN.MODEL.COARSE_SCALE_IDX = 2
-    _CN.MODEL.FINE_SCALE_IDX = 0
-if _CN.MODEL.BACKBONE.BACKBONE_TYPE == "ConvVMamba":
-    _CN.MODEL.BACKBONE.RESOLUTION = (2, 4, 8)
-    _CN.MODEL.BACKBONE.LAYER_DIMS = (48, 96, 192)
-    _CN.MODEL.COARSE_SCALE_IDX = 2
-    _CN.MODEL.FINE_SCALE_IDX = 0
-
 # Calculate coarse scale
-_CN.DATASET.MGDPT_COARSE_SCALE = _CN.MODEL.COARSE_SCALE = _CN.MODEL.BACKBONE.RESOLUTION[_CN.MODEL.COARSE_SCALE_IDX]
-# Calculate fine scale
-_CN.MODEL.FINE_SCALE = _CN.MODEL.BACKBONE.RESOLUTION[_CN.MODEL.FINE_SCALE_IDX]
+_CN.DATASET.MGDPT_COARSE_SCALE = _CN.MODEL.COARSE_SCALE = _CN.MODEL.BACKBONE.PATCH_SIZE * 2 ** (_CN.COARSE_SCALE_IDX)
 
 ########    Logger Configurations    ########
 _CN.LOGGER = CN()
-if _CN.MODEL.VERSION == "v1":
-    _CN.LOGGER.LOGGER_NAME = (f"{_CN.DATASET.TRAINVAL_DATA_SOURCE}_{_CN.IMAGE_SIZE}_") + \
-                            (_CN.MODEL.VERSION) + \
-                            (f"_{_CN.MODEL.COARSE_SCALE}") + \
-                            (f"_{_CN.MODEL.FINE_SCALE}") + \
-                            (f"_{_CN.MODEL.BACKBONE.BACKBONE_TYPE}") + \
-                            (f"_C{_CN.MODEL.COARSE_ENCODER.NUM_LAYERS}F{_CN.MODEL.FINE_ENCODER.NUM_LAYERS}") + \
-                            (f"_I{_CN.MODEL.REFINE_ITERS}R{_CN.MODEL.REFINE_LOOKUP_RADIUS}_") + \
-                            ("D" if _CN.MODEL.CONF_MASK_DEPTH_REFINEMENT else "") + \
-                            ("A" if _CN.DATASET.AUGMENTATION_TYPE is not None else "") + \
-                            ("nCTXT" if not _CN.MODEL.REFINEMENT.CONTEXT_INJECTION else "")
+_CN.LOGGER.EXP_NAME = f"{datetime.isoformat(datetime.now(), sep='-', timespec='seconds')}"
+_CN.LOGGER.LOGGER_NAME = (
+    (f"{_CN.DATASET.TRAINVAL_DATA_SOURCE}_{_CN.IMAGE_SIZE}")
+    + (f"_C{_CN.MODEL.COARSE_SCALE_IDX}")
+    + (f"_F{_CN.MODEL.FINE_SCALE_IDX}")
+    + (f"_Extra{_CN.MODEL.BACKBONE.EXTRA_DEPTH}")
+    + (f"_I{_CN.MODEL.REFINE_ITERS}R{_CN.MODEL.REFINE_LOOKUP_RADIUS}_")
+    + ("A" if _CN.DATASET.AUGMENTATION_TYPE is not None else "")
+    + ("nCTXT" if not _CN.MODEL.REFINEMENT.CONTEXT_INJECTION else "")
+)
+
+########    Profiler Configurations    ########
+_CN.PROFILER = CN()
+_CN.PROFILER.PROFILER_NAME = None                  # options: [None, "inference", "pytorch"], defaults: None
 
 
 def get_cfg_defaults():
     # Set the seed
     if _CN.GLOBAL_SEED is None:
-        seed = os.environ.get('GLOBAL_SEED')
+        seed = os.environ.get("GLOBAL_SEED")
         if seed:
             _CN.GLOBAL_SEED = int(seed)
         else:
             # set a random number with current time as random seed
             random.seed(a=None)
             _CN.GLOBAL_SEED = random.randint(0, 4294967295)
-            os.environ['GLOBAL_SEED'] = str(_CN.GLOBAL_SEED)
+            os.environ["GLOBAL_SEED"] = str(_CN.GLOBAL_SEED)
 
             # print out the random seed and logger name
             print("", flush=True)
@@ -365,10 +275,12 @@ def get_cfg_defaults():
             print(f"\tLogger name: {_CN.LOGGER.LOGGER_NAME}", flush=True)
             print("#" * 128, flush=True)
             print("", flush=True)
+            print(_CN)
 
     # Return a clone so that the defaults will not be altered
     # This is for the "local variable" use pattern
     return _CN.clone()
+
 
 if __name__ == "__main__":
     print("", flush=True)
@@ -377,3 +289,4 @@ if __name__ == "__main__":
     print(f"\tLogger name: {_CN.LOGGER.LOGGER_NAME}", flush=True)
     print("#" * 128, flush=True)
     print("", flush=True)
+    print(_CN)

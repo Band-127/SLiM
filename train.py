@@ -1,4 +1,4 @@
-import math
+import pprint
 from pathlib import Path
 import torch
 import pytorch_lightning as pl
@@ -12,7 +12,7 @@ from utils.profiler import build_profiler
 from default_config import get_cfg_defaults
 from utils.misc import setup_gpus, get_rank_zero_only_logger
 from src.lightning_rcrm import PL_RCRM
-from datasets.rcrm_dataset import RCRM_Dataset
+from src.datasets.rcrm_dataset import RCRM_Dataset
 
 # get logger and set as rank zero only(means ony info from rank 1 gpu will be stated out)
 loguru_logger = get_rank_zero_only_logger(loguru_logger)
@@ -23,9 +23,6 @@ def main():
     pl.seed_everything(config.GLOBAL_SEED)
     torch.cuda.manual_seed_all(config.GLOBAL_SEED)
 
-    # set train/test
-    config.OVERALL_MODE = "train"
-
     # setup exact gpus available and set CUDA_VISIBLE_DEVICES variable
     n_gpu_available = (
         setup_gpus(config.DEVICE.GPU_IDX) if config.DEVICE.ENABLE_GPU else 0
@@ -33,16 +30,14 @@ def main():
     config.TRAINER.WORLD_SIZE = n_gpu_available * config.DEVICE.NUM_NODES
     config.TRAINER.TRUE_BATCH_SIZE = (
         config.TRAINER.WORLD_SIZE
-        * config.LOADER.BATCH_SIZE
+        * config.BATCH_SIZE
         * config.TRAINER.ACCUMULATE_GRAD_BATCHES
     )
     config.TRAINER.SCALING = (
         config.TRAINER.TRUE_BATCH_SIZE / config.TRAINER.CANONICAL_BS
     )
     config.TRAINER.TRUE_LR = config.TRAINER.CANONICAL_LR * config.TRAINER.SCALING
-    config.TRAINER.WARMUP_STEP = math.floor(
-        config.TRAINER.WARMUP_STEP / config.TRAINER.SCALING
-    )
+    loguru_logger.info("Config: \n" + pprint.pformat(config))
 
     # Profiler
     profiler = build_profiler(config.PROFILER.PROFILER_NAME)
@@ -91,6 +86,7 @@ def main():
         profiler=profiler,
         accumulate_grad_batches=config.TRAINER.ACCUMULATE_GRAD_BATCHES,
         log_every_n_steps=int(50 / config.TRAINER.ACCUMULATE_GRAD_BATCHES),
+        max_epochs=27
     )
     loguru_logger.info("Trainer Initialized!")
 

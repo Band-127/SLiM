@@ -1,66 +1,93 @@
-import sys
-import importlib
+import argparse
 import math
+import pprint
 import torch
 from yacs.config import CfgNode as CN
 import pytorch_lightning as pl
 from loguru import logger as loguru_logger
-import cv2
+
 from utils.profiler import build_profiler
+from default_config import get_cfg_defaults
 from utils.misc import setup_gpus, get_rank_zero_only_logger
 from src.lightning_rcrm import PL_RCRM
-from datasets.rcrm_dataset import RCRM_Dataset
+from src.datasets.rcrm_dataset import RCRM_Dataset
 
 # get logger and set as rank zero only(means ony info from rank 1 gpu will be stated out)
 loguru_logger = get_rank_zero_only_logger(loguru_logger)
 
 
 def main():
-    # latest_ckpt_path = (
-    #     "logs/tb_logs/MegaDepth_960_v1_8_2_ConvVMamba_C2F0_I4R3_/version_2/"
-    # )
-    # latest_ckpt = "checkpoints/epoch=13-auc@5=0.561-auc@10=0.720-auc@20=0.835.ckpt"
-    latest_ckpt_path = (
-        "logs/tb_logs/MegaDepth_1024_v1_8_2_ConvVMamba_C2F0_I4R3_/version_3/"
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--ckpt_path",
+        type=str,
+        default="ckpt/megadepth_19epochs.ckpt",
+        help="Path to checkpoint file.",
     )
-    # latest_ckpt = "checkpoints/epoch=25-auc@5=0.533-auc@10=0.699-auc@20=0.818.ckpt"
-    latest_ckpt = "checkpoints/epoch=18-auc@5=0.533-auc@10=0.697-auc@20=0.819.ckpt"
-    devices = "6,7"
-    seed = 66
-    # ransac_thres = 0.5
-    # ransac_times = 5
-    # coarse_thres = 0.03
-    # intermediate_thres = 0.03
-    # coarse_max = 6000
-    # intermediate_max = 18000
-    # refine_iters = 4
-    # image_size = [1184, 1184]
-    
-    ransac_thres = 0.5
-    ransac_times = 1
-    coarse_thres = 0.0002
-    intermediate_thres = 0.0002
-    coarse_max = 600
-    intermediate_max = 2400
-    refine_iters = 4
-    image_size = [480, 640]
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="2,3,4,5,6,7",
+        help="Comma-separated list of GPU devices to use.",
+    )
+    parser.add_argument(
+        "--thr",
+        type=float,
+        default=None,
+        help="Threshold used in correlation filtering.",
+    )
+    parser.add_argument(
+        "--refine_iters",
+        type=int,
+        default=4,
+        help="Iterations number for refinement.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed.",
+    )
+    parser.add_argument(
+        "--optimized_ds",
+        action="store_true",
+        help="Partial dual softmax.",
+    )
+    parser.add_argument(
+        "--amp",
+        action="store_true",
+        help="Auto mixed precision.",
+    )
+    args = parser.parse_args()
 
-    sys.path.append(latest_ckpt_path)
-    get_cfg_defaults = importlib.import_module("config").get_cfg_defaults
+    ckpt_path = args.ckpt_path
+    device = args.device
+    thr = args.thr
+    refine_iters = args.refine_iters
+    seed = args.seed
+    optimized_ds = args.optimized_ds
+    amp = args.amp
+    if seed is None:
+        import os
+        import random
+
+        seed = os.environ.get("GLOBAL_SEED")
+        if seed:
+            seed = int(seed)
+        else:
+            # set a random number with current time as random seed
+            random.seed(a=None)
+            seed = random.randint(0, 4294967295)
+            os.environ["GLOBAL_SEED"] = str(seed)
 
     # get configurations
     config: CN = get_cfg_defaults()
     config.GLOBAL_SEED = seed
     pl.seed_everything(config.GLOBAL_SEED)
-
-    # set train/test
-    config.OVERALL_MODE = "test"
+    torch.cuda.manual_seed_all(config.GLOBAL_SEED)
 
     # setup exact gpus available and set CUDA_VISIBLE_DEVICES variable
-    config.DEVICE.GPU_IDX = devices
-    n_gpu_available = (
-        setup_gpus(config.DEVICE.GPU_IDX) if config.DEVICE.ENABLE_GPU else 0
-    )
+    n_gpu_available = setup_gpus(device) if config.DEVICE.ENABLE_GPU else 0
     config.TRAINER.WORLD_SIZE = n_gpu_available * config.DEVICE.NUM_NODES
     config.TRAINER.TRUE_BATCH_SIZE = (
         config.TRAINER.WORLD_SIZE * config.LOADER.BATCH_SIZE
@@ -72,17 +99,19 @@ def main():
     config.TRAINER.WARMUP_STEP = math.floor(
         config.TRAINER.WARMUP_STEP / config.TRAINER.SCALING
     )
-
-    # lower the ransac pixel threshold for better performance
-    config.TRAINER.RANSAC_PIXEL_THR = ransac_thres
-    config.TRAINER.RANSAC_TIMES = ransac_times
-    config.MODEL.COARSE_MATCHING.THRESHOLD = coarse_thres
-    config.MODEL.INTERMEDIATE_MATCHING.THRESHOLD = intermediate_thres
-    config.IMAGE_SIZE = config.DATASET.MGDPT_IMG_RESIZE = image_size[0]
-    config.MODEL.BACKBONE.INPUT_SIZE = image_size
-    config.MODEL.COARSE_MATCHING.MAX_MATCHES = coarse_max
-    config.MODEL.INTERMEDIATE_MATCHING.MAX_MATCHES = intermediate_max
-    config.MODEL.REFINE_ITERS = refine_iters
+    if thr is not None:
+        config.MODEL.COARSE_THRES = config.COARSE_THRES = thr
+        config.MODEL.FINE_THRES = config.FINE_THRES = thr
+    config.MODEL.REFINE_ITERS = config.REFINE_ITERS = refine_iters
+    config.DUMP_DIR = {
+        "outdoor_train": None,
+        "outdoor_test": f"dump/rcrm_outdoor_I{config.REFINE_ITERS}",
+        "indoor_train": None,
+        "indoor_test": f"dump/rcrm_indoor_I{config.REFINE_ITERS}",
+    }[config.MODE]
+    config.MODEL.OPTIMIZED_DUAL_SOFTMAX = config.OPTIMIZED_DUAL_SOFTMAX = optimized_ds
+    config.AMP = amp if amp is not None else config.AMP
+    loguru_logger.info("Config: \n" + pprint.pformat(config))
 
     # Profiler
     profiler = build_profiler("inference")
@@ -90,7 +119,7 @@ def main():
     # Lightning module
     model = PL_RCRM(
         config=config,
-        pretrained_ckpt=latest_ckpt_path + "/" + latest_ckpt,
+        pretrained_ckpt=ckpt_path,
         profiler=profiler,
         dump_dir=config.DUMP_DIR,
     )
