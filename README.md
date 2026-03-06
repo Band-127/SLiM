@@ -32,9 +32,12 @@
 
 ## ✅ TODO
 
-- [x] Release installation steps.
-- [ ] Release train and test demo.
-- [ ] Release pre-trained models.
+| ToDos                       | Status              |
+|-----------------------------|---------------------|
+| **Installation Guides**     | ✅ Available       |
+| **Pre-trained Models**      | ✅ Available       |
+| **Training & testing Code** | 🚧 In Progress     |
+
 
 <a id="installation-and-environment-setup"></a>
 
@@ -169,6 +172,8 @@ cd ../../../../../
 <a id="pretrained-model"></a>
 
 ## 📦 Pretrained model
+
+The pretrained model is provided at: `ckpt/megadepth_19epochs.ckpt`
 
 <a id="training"></a>
 

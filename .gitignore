@@ -1,9 +1,11 @@
-*.log
+# python cache
 __pycache__/
 */__pycache__/
-.vscode/
-dump/*
+# log files
+*.log
 logs/tb_logs/*
-cached*.pkl
+dump/*
+# vscode cache
+.vscode/
+# jupyter files
 *.ipynb
-.cursorignore
