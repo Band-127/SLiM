@@ -7,3 +7,17 @@ einops
 albumentations
 joblib
 h5py
+tensorboard
+timm==0.4.12
+loguru
+fvcore
+numpy==1.26.4
+packaging
+pytest 
+chardet 
+termcolor
+submitit 
+tensorboardX
+seaborn
+hydra-core
+transformers==4.42.4

@@ -32,8 +32,8 @@
 
 ## ✅ TODO
 
+- [x] Release installation steps.
 - [ ] Release train and test demo.
-- [ ] Release installation steps.
 - [ ] Release pre-trained models.
 
 <a id="installation-and-environment-setup"></a>
@@ -123,16 +123,46 @@ Efficient Matching
 
 ### 2. Environment Setup
 
+We have tested the following environment on **Ubuntu 22.04**.
+
+- **CUDA version** does not have to be identical to ours, but make sure:
+  - Your **NVIDIA driver** supports the CUDA version used by your **PyTorch build** (i.e., driver capability should be >= PyTorch CUDA version).
+  - The **PyTorch CUDA version** should match the **CUDA toolkit** you compile against in the environment.
+- **CUDA toolkit choice**
+  - If your system already has a compatible `cuda-toolkit`, you can use the system installation.
+  - Otherwise, install `cuda-toolkit` inside the conda environment (as shown below) and use it for compilation.
+- **GCC/G++ compatibility**
+  - `gcc/g++` must be compatible with the CUDA toolkit version you use.
+  - If your system `gcc/g++` can compile CUDA extensions successfully, you do **not** need to install `gcc/g++` in conda.
+
 ```bash
 conda create -n soma -y python=3.10
 conda activate soma
 
 # torch = 2.1.1+cu118
-pip install torch==2.1.1 torchvision==0.16.1 torchaudio==2.1.1 --index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.1.1 torchvision==0.16.1 torchaudio==2.1.1 --index-url https://download.pytorch.org/whl/cu118\
+
 # mamba and causal-conv1d package, check mamba github page if installation/build fails
-pip install mamba-ssm[causal-conv1d]
+conda install cuda-toolkit==11.8 -c nvidia/label/cuda-11.8.0
+pip install mamba-ssm==2.2.2
+pip install causal-conv1d==1.2.1
+
 # other dependencies: pytorch-lightning, albumentation, yacs etc.
 pip install -r requirements.txt
+
+# selective scan from vmamba
+#     force use conda gcc and g++ (=11)
+conda install -c conda-forge -y gcc_linux-64=11 gxx_linux-64=11
+export CC="$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-gcc"
+export CXX="$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-g++"
+#     force use conda cuda
+export CUDA_HOME="$CONDA_PREFIX"
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/lib:$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
+#     compilation takes time, please wait patiently
+cd src/backbone/vssm/kernels/selective_scan
+pip install . --no-build-isolation
+cd ../../../../../
 ```
 
 
