@@ -1,7 +1,9 @@
 # Scalable Feature Matching via State Space Modeling and Sparse Correlation (CVPR 2026)
 > Choo Sin Wai, Bo Li\* \
 > \* corresponding author \
-> **SoMa means Salient-only Matching**
+
+> **SoMa means Salient-only Matching** \
+> *When we submitted the paper, we not yet have an official abbreviation. Following a reviewer’s suggestion, we later decided to abbreviate our method as SoMa. However, since the paper title cannot be changed after rebuttal, the final title does not include “SoMa”.*
 
 <p align="center">
   <a href="https://openreview.net/profile?id=%7EChoo_Sin_Wai1">
