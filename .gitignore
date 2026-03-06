@@ -4,6 +4,7 @@ __pycache__/
 # log files
 *.log
 logs/tb_logs/*
+logs
 dump/*
 # vscode cache
 .vscode/
