@@ -3,7 +3,6 @@ __pycache__/
 */__pycache__/
 # log files
 *.log
-logs/tb_logs/*
 dump/*
 # vscode cache
 .vscode/
