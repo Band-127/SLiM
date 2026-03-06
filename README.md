@@ -40,11 +40,11 @@
 
 ## ⚙️ Installation and environment setup
 
-### 1. Dataset Setup (thanks to LoFTR for the guides)
+### 1. 🗂️ Dataset Setup (thanks to LoFTR for the guides)
 
-#### 1.1 Download dataset indices
+#### 1.1 📥 Download dataset indices
 
-- Download the dataset indices from this [Google Drive folder](https://drive.google.com/drive/folders/1fhAHN5tYr4yANkkFSHJ5kXjcSnepu0l3?usp=sharing)
+- Download the dataset indices (filename: data.7z) from this [Google Drive folder](https://drive.google.com/drive/folders/1fhAHN5tYr4yANkkFSHJ5kXjcSnepu0l3?usp=sharing)
 - Unzip them and place them under the project root as follows:
 ```
 Efficient Matching
@@ -63,9 +63,9 @@ Efficient Matching
                └── scenexxxx_xx (100 scenes here)
 ```
 
-#### 1.2 Download dataset
+#### 1.2 📦 Download dataset
 
-##### 1.2.1 MegaDepth
+##### 1.2.1 🏔️ MegaDepth
 
 Similar to LoFTR, we use depth maps provided in the original MegaDepth dataset as well as undistorted images, corresponding camera intrinsics and extrinsics preprocessed by D2-Net. You can download them separately from the following links:
 
@@ -76,11 +76,11 @@ Similar to LoFTR, we use depth maps provided in the original MegaDepth dataset a
     - Images are undistorted manually in D2-Net since the undistorted images from MegaDepth do not come with corresponding intrinsics.
     - Path of the downloaded data will be referred to as `/path/to/megadepth_d2net`
 
-##### 1.2.2 ScanNet
+##### 1.2.2 🏢 ScanNet
 
 - Download the dataset following the official guide: [ScanNet](https://github.com/ScanNet/ScanNet), and use the Python-exported data.
 
-#### 1.3 Build the dataset symlinks
+#### 1.3 🔗 Build the dataset symlinks
 
 We symlink the datasets into the `data` directory under the project root.
 ```bash
@@ -94,7 +94,7 @@ ln -sv /path/to/megadepth/phoenix /path/to/megadepth_d2net/Undistorted_SfM /path
 ln -sv /path/to/megadepth/phoenix /path/to/megadepth_d2net/Undistorted_SfM /path/to/Efficient_Matching/data/megadepth/test
 ```
 
-#### 1.4 Final data structure
+#### 1.4 🧱 Final data structure
 
 ```
 Efficient Matching
@@ -121,7 +121,7 @@ Efficient Matching
                └── scenexxxx_xx (1513 scenes here)
 ```
 
-### 2. Environment Setup
+### 2. 🧰 Environment Setup
 
 We have tested the following environment on **Ubuntu 22.04**.
 
