@@ -36,7 +36,7 @@
 |-----------------------------|---------------------|
 | **Installation Guides**     | ✅ Available       |
 | **Pre-trained Models**      | ✅ Available       |
-| **Training & testing Code** | 🚧 In Progress     |
+| **Training & testing Code** | ✅ Available       |
 
 
 <a id="installation-and-environment-setup"></a>
@@ -179,9 +179,37 @@ The pretrained model is provided at: `ckpt/megadepth_19epochs.ckpt`
 
 ## 🏋️ Training
 
+Train on indoor or outdoor datasets. `--device` specifies which GPU(s) to use (e.g., `0,1,2` for GPUs 0–2; also accept `8` to use the first 8 GPUs). Example usage: `--device 0,1,2,3` or `--device 4`.
+
+```bash
+# Indoor train
+python train.py --config_name indoor_train --device {device indices}
+# Outdoor train
+python train.py --config_name outdoor_train --device {device indices}
+```
+
+Optional: run the process in the background and redirect stdout to a log file:
+```bash
+nohup python train.py --config_name indoor_train --device 0,1,2 > indoor_train.log &
+```
+
 <a id="testing"></a>
 
 ## 🧪 Testing
+
+Test on indoor or outdoor datasets. `--device` follows the same convention as training.
+
+```bash
+# Indoor test
+python test.py --config_name indoor_test --device {device indices}
+# Outdoor test
+python test.py --config_name outdoor_test --device {device indices}
+```
+
+Optional: run the process in the background and redirect stdout to a log file:
+```bash
+nohup python test.py --config_name indoor_test --device 0,1,2 > indoor_test.log &
+```
 
 <a id="citation"></a>
 

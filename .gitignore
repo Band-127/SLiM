@@ -9,3 +9,13 @@ dump/*
 .vscode/
 # jupyter files
 *.ipynb
+
+# ScanNet
+data/scannet/index
+data/scannet/train
+data/scannet/test
+
+# MegaDepth
+data/megadepth/index
+data/megadepth/train
+data/megadepth/test

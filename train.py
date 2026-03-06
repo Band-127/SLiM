@@ -19,7 +19,49 @@ loguru_logger = get_rank_zero_only_logger(loguru_logger)
 
 
 def main():
-    config = get_cfg_defaults()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="2,3,4,5,6,7",
+        help="Comma-separated list of GPU devices to use.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed.",
+    )
+    parser.add_argument(
+        "--config_name",
+        type=str,
+        default="outdoor_train",
+        help="Config name. [outdoor_train, indoor_train]",
+    )
+    args = parser.parse_args()
+    
+    device = args.device
+    seed = args.seed
+    config_name = args.config_name
+    
+    # get configurations
+    config: CN = get_config(config_name)
+    
+    # set seed
+    if seed is None:
+        import os
+        import random
+
+        seed = os.environ.get("GLOBAL_SEED")
+        if seed:
+            seed = int(seed)
+        else:
+            # set a random number with current time as random seed
+            random.seed(a=None)
+            seed = random.randint(0, 4294967295)
+            os.environ["GLOBAL_SEED"] = str(seed)
+
+    config.GLOBAL_SEED = seed
     pl.seed_everything(config.GLOBAL_SEED)
     torch.cuda.manual_seed_all(config.GLOBAL_SEED)
 

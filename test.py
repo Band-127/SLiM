@@ -7,7 +7,7 @@ import pytorch_lightning as pl
 from loguru import logger as loguru_logger
 
 from utils.profiler import build_profiler
-from default_config import get_cfg_defaults
+from default_config import get_config
 from utils.misc import setup_gpus, get_rank_zero_only_logger
 from src.lightning_rcrm import PL_RCRM
 from src.datasets.rcrm_dataset import RCRM_Dataset
@@ -58,6 +58,12 @@ def main():
         action="store_true",
         help="Auto mixed precision.",
     )
+    parser.add_argument(
+        "--config_name",
+        type=str,
+        default="outdoor_test",
+        help="Config name. [outdoor_test, indoor_test]",
+    )
     args = parser.parse_args()
 
     ckpt_path = args.ckpt_path
@@ -67,6 +73,12 @@ def main():
     seed = args.seed
     optimized_ds = args.optimized_ds
     amp = args.amp
+    config_name = args.config_name
+
+    # get configurations
+    config: CN = get_config(config_name)
+    
+    # set seed
     if seed is None:
         import os
         import random
@@ -80,8 +92,6 @@ def main():
             seed = random.randint(0, 4294967295)
             os.environ["GLOBAL_SEED"] = str(seed)
 
-    # get configurations
-    config: CN = get_cfg_defaults()
     config.GLOBAL_SEED = seed
     pl.seed_everything(config.GLOBAL_SEED)
     torch.cuda.manual_seed_all(config.GLOBAL_SEED)
@@ -99,6 +109,7 @@ def main():
     config.TRAINER.WARMUP_STEP = math.floor(
         config.TRAINER.WARMUP_STEP / config.TRAINER.SCALING
     )
+    # Set threshold if provided
     if thr is not None:
         config.MODEL.COARSE_THRES = config.COARSE_THRES = thr
         config.MODEL.FINE_THRES = config.FINE_THRES = thr
