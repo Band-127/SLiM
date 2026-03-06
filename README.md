@@ -57,7 +57,7 @@
 
 #### 1.1 📥 Download dataset indices
 
-- Download the dataset indices (filename: data.7z) from this [Google Drive folder](https://drive.google.com/drive/folders/1fhAHN5tYr4yANkkFSHJ5kXjcSnepu0l3?usp=sharing)
+- Download the dataset indices (filename: data.7z) from this [Google Drive folder](https://drive.google.com/drive/folders/1fhAHN5tYr4yANkkFSHJ5kXjcSnepu0l3?usp=sharing) or [Baidu Netdisk](https://pan.baidu.com/s/18c-vLbP2mierBjLUCNroZA?pwd=22w1) [password: 22w1].
 - Unzip them and place them under the project root as follows:
 ```
 SoMa
