@@ -33,7 +33,7 @@
 
 ## 📰 News
 
-- [2026.02] Our paper is accepted by CVPR 2026.
+- 🎉 [2026.02] Our paper is accepted to CVPR 2026.
 
 <a id="todo"></a>
 
