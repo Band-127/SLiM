@@ -1,6 +1,13 @@
-# SoMa: Scalable Feature Matching via State Space Modeling and Sparse Correlation (CVPR 2026)
+# Scalable Feature Matching via State Space Modeling and Sparse Correlation (CVPR 2026)
 > Choo Sin Wai, Bo Li\* \
 > \* corresponding author
+> **SoMa means Salient-only Matching**
+
+<p align="center">
+  <a href="https://openreview.net/profile?id=%7EChoo_Sin_Wai1">
+    <img src="https://img.shields.io/badge/Paper-Website-blue" alt="Paper" />
+  </a>
+</p>
 
 <p align="center">
   <img src="assets/pipeline.png" width="400" alt="Method pipeline" />
@@ -50,7 +57,7 @@
 - Download the dataset indices (filename: data.7z) from this [Google Drive folder](https://drive.google.com/drive/folders/1fhAHN5tYr4yANkkFSHJ5kXjcSnepu0l3?usp=sharing)
 - Unzip them and place them under the project root as follows:
 ```
-Efficient Matching
+SoMa
 └── data
      ├── megadepth
      │   └── index
@@ -89,18 +96,18 @@ We symlink the datasets into the `data` directory under the project root.
 ```bash
 # scannet
 # -- # train dataset
-ln -s /path/to/scannet_train/* /path/to/Efficient_Matching/data/scannet/train
+ln -s /path/to/scannet_train/* /path/to/SoMa/data/scannet/train
 
 # megadepth
 # -- # train and test dataset (train and test share the same dataset)
-ln -sv /path/to/megadepth/phoenix /path/to/megadepth_d2net/Undistorted_SfM /path/to/Efficient_Matching/data/megadepth/train
-ln -sv /path/to/megadepth/phoenix /path/to/megadepth_d2net/Undistorted_SfM /path/to/Efficient_Matching/data/megadepth/test
+ln -sv /path/to/megadepth/phoenix /path/to/megadepth_d2net/Undistorted_SfM /path/to/SoMa/data/megadepth/train
+ln -sv /path/to/megadepth/phoenix /path/to/megadepth_d2net/Undistorted_SfM /path/to/SoMa/data/megadepth/test
 ```
 
 #### 1.4 🧱 Final data structure
 
 ```
-Efficient Matching
+SoMa
 └── data
       ├── megadepth
       │   ├── index
