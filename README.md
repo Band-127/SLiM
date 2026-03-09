@@ -46,7 +46,6 @@
 | **Installation Guides**             | ✅ Available       |
 | **Pre-trained Models**              | ✅ Available       |
 | **Training & testing Code**         | ✅ Available       |
-| **Published and Update Citation**   | 🚧 In Progress       |
 
 
 <a id="installation-and-environment-setup"></a>
@@ -224,12 +223,11 @@ nohup python test.py --config_name indoor_test --device 0,1,2 > indoor_test.log 
 <a id="citation"></a>
 
 ## 📚 Citation
-Our paper is still waiting for publish.
-<!-- ```bibtex
+```bibtex
 @inproceedings{choo2026soma,
   title={Scalable Feature Matching via State Space Modeling and Sparse Correlation},
   author={Choo, Sin Wai and Li, Bo},
   booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
   year={2026}
 }
-``` -->
+```
