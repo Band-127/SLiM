@@ -17,8 +17,8 @@ from pytorch_lightning.profilers.profiler import Profiler
 from pytorch_lightning.profilers import PassThroughProfiler
 import torch.distributed as dist
 
-from src.rcrm import RCRM
-from src.loss import RCRM_Loss
+from src.soma import SoMa
+from src.loss import SoMa_Loss
 from src.utils.misc import CudaTimer
 from src.utils.supervision import compute_supervision_coarse, compute_supervision_fine
 from utils.metrics import (
@@ -48,7 +48,7 @@ def get_mean_time_across_ranks(local_time):
     return local_time
 
 
-class PL_RCRM(pl.LightningModule):
+class PL_SoMa(pl.LightningModule):
     def __init__(
         self,
         config: CN,
@@ -70,15 +70,15 @@ class PL_RCRM(pl.LightningModule):
         self.amp = config.AMP
 
         # Model
-        self.rcrm = RCRM(config=config["MODEL"])
-        self.loss = RCRM_Loss(config=config["LOSS"])
-        self.rcrm.max_coarse_matches *= config.BATCH_SIZE
-        self.rcrm.max_fine_matches *= config.BATCH_SIZE
+        self.soma = SoMa(config=config["MODEL"])
+        self.loss = SoMa_Loss(config=config["LOSS"])
+        self.soma.max_coarse_matches *= config.BATCH_SIZE
+        self.soma.max_fine_matches *= config.BATCH_SIZE
 
         # Read pretrained checkpoint if exists
         if pretrained_ckpt:
             state_dict = torch.load(pretrained_ckpt, map_location="cpu")["state_dict"]
-            self.rcrm.load_state_dict(state_dict, strict=True)
+            self.soma.load_state_dict(state_dict, strict=True)
             logger.info(f"Load '{pretrained_ckpt}' as pretrained checkpoint")
 
         self.coarse_scale = self.config.MODEL.COARSE_SCALE  # Coarse scale
@@ -237,7 +237,7 @@ class PL_RCRM(pl.LightningModule):
 
         with self.profiler.profile("Main forward"):
             with CudaTimer() as timer:
-                self.rcrm(batch, training=training)
+                self.soma(batch, training=training)
 
         if training:
             with self.profiler.profile("Compute fine supervision"):
@@ -321,10 +321,10 @@ class PL_RCRM(pl.LightningModule):
         if self.trainer.current_epoch == 0:
             # Print model summary
             if self.trainer.global_rank == 0:
-                print(self.rcrm)
-                print_params_summary(self.rcrm, recursive=False)
-        self.rcrm.train()
-        self.rcrm.initial_forward()
+                print(self.soma)
+                print_params_summary(self.soma, recursive=False)
+        self.soma.train()
+        self.soma.initial_forward()
 
     def on_train_epoch_end(self):
         # time
@@ -366,8 +366,8 @@ class PL_RCRM(pl.LightningModule):
         )
 
     def on_validation_epoch_start(self):
-        self.rcrm.eval()
-        self.rcrm.initial_forward()
+        self.soma.eval()
+        self.soma.initial_forward()
 
     def on_validation_epoch_end(self):
         # handle multiple validation sets
@@ -462,7 +462,7 @@ class PL_RCRM(pl.LightningModule):
         with torch.inference_mode(True):
             with torch.cuda.amp.autocast(enabled=self.amp):
                 with CudaTimer() as timer:
-                    self.rcrm(batch)
+                    self.soma(batch)
 
         # All timers
         keys = test_timer_list
@@ -503,8 +503,8 @@ class PL_RCRM(pl.LightningModule):
         self.test_outputs.append(ret_dict)
 
     def on_test_epoch_start(self):
-        self.rcrm.eval()
-        self.rcrm.initial_forward()
+        self.soma.eval()
+        self.soma.initial_forward()
 
     def on_test_epoch_end(self):
         with torch.inference_mode(False):
@@ -548,7 +548,7 @@ class PL_RCRM(pl.LightningModule):
             )
             logger.info("\n" + pprint.pformat(val_metrics_4tb))
             if self.dump_dir is not None:
-                np.save(Path(self.dump_dir) / "rcrm_pred_eval", dumps)
+                np.save(Path(self.dump_dir) / "soma_pred_eval", dumps)
         self.test_outputs.clear()
 
     @staticmethod

@@ -14,9 +14,9 @@ from .sampler import RandomConcatSampler
 from utils.augment import get_augmentor_builder
 
 
-class RCRM_Dataset(pl.LightningDataModule):
+class SoMa_Dataset(pl.LightningDataModule):
     def __init__(self, config: CN):
-        super(RCRM_Dataset, self).__init__()
+        super(SoMa_Dataset, self).__init__()
 
         # 1. Read vars
         self.mode = "train" if "train" in config.MODE else "val"

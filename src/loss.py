@@ -4,13 +4,13 @@ from torch import nn
 from torch.nn import functional as F
 
 
-class RCRM_Loss(nn.Module):
+class SoMa_Loss(nn.Module):
     def __init__(self, config: CN):
         """
         Args:
             config (CN): root.LOSS configuration path
         """
-        super(RCRM_Loss, self).__init__()
+        super(SoMa_Loss, self).__init__()
 
         self.config = config
         self.coarse_weight = self.config["COARSE_WEIGHT"]
