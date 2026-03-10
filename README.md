@@ -156,8 +156,8 @@ pip install torch==2.1.1 torchvision==0.16.1 torchaudio==2.1.1 --index-url https
 
 # mamba and causal-conv1d package, check mamba github page if installation/build fails
 conda install cuda-toolkit==11.8 -c nvidia/label/cuda-11.8.0
-pip install mamba-ssm==2.2.2
-pip install causal-conv1d==1.2.1
+pip install causal-conv1d==1.2.1 --no-build-isolation
+pip install mamba-ssm==2.2.2 --no-build-isolation
 
 # other dependencies: pytorch-lightning, albumentation, yacs etc.
 pip install -r requirements.txt
