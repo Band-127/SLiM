@@ -9,7 +9,7 @@ from .recurrent_refinement import RecurrentRefinementUnit
 from .utils.misc import create_grid, CudaTimer, Upsample
 
 
-class SoMa(nn.Module):
+class SLiM(nn.Module):
     def __init__(self, config: CN):
         super().__init__()
         self.d_coarse = config["COARSE_DIM"]
@@ -1063,8 +1063,8 @@ class SoMa(nn.Module):
 
     def load_state_dict(self, state_dict, *args, **kwargs):
         for k in list(state_dict.keys()):
-            if k.startswith("soma."):
-                state_dict[k.replace("soma.", "", 1)] = state_dict.pop(k)
+            if k.startswith("slim."):
+                state_dict[k.replace("slim.", "", 1)] = state_dict.pop(k)
         # for k in list(state_dict.keys()):
         #     if k.startswith("coarse_encoder"):
         #         state_dict[

@@ -51,7 +51,7 @@ class MobileAug(object):
     def __call__(self, x):
         return self.augmentor(image=x)["image"]
 
-class SoMaAug(object):
+class SLiMAug(object):
     def __init__(self):
         self.augmentor = A.Compose(
             [
@@ -76,7 +76,7 @@ class SoMaAug(object):
         return self.augmentor(image=x)["image"]
 
 
-class SoMaLiteAug(object):
+class SLiMLiteAug(object):
     def __init__(self):
         self.augmentor = A.Compose(
             [
@@ -101,10 +101,10 @@ def build_augmentor(method=None, **kwargs):
         return DarkAug()
     elif method == "mobile":
         return MobileAug()
-    elif method == "soma":
-        return SoMaAug()
-    elif method == "soma_lite":
-        return SoMaLiteAug()
+    elif method == "slim":
+        return SLiMAug()
+    elif method == "slim_lite":
+        return SLiMLiteAug()
     elif method is None:
         return None
     else:
@@ -116,10 +116,10 @@ def get_augmentor_builder(method=None, **kwargs):
         return DarkAug
     elif method == "mobile":
         return MobileAug
-    elif method == "soma":
-        return SoMaAug
-    elif method == "soma_lite":
-        return SoMaLiteAug
+    elif method == "slim":
+        return SLiMAug
+    elif method == "slim_lite":
+        return SLiMLiteAug
     elif method is None:
         return None
     else:

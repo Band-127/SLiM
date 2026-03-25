@@ -9,8 +9,8 @@ from loguru import logger as loguru_logger
 from utils.profiler import build_profiler
 from default_config import get_config
 from utils.misc import setup_gpus, get_rank_zero_only_logger
-from src.lightning_soma import PL_SoMa
-from src.datasets.soma_dataset import SoMa_Dataset
+from src.lightning_slim import PL_SLiM
+from src.datasets.slim_dataset import SLiM_Dataset
 
 # get logger and set as rank zero only(means ony info from rank 1 gpu will be stated out)
 loguru_logger = get_rank_zero_only_logger(loguru_logger)
@@ -116,9 +116,9 @@ def main():
     config.MODEL.REFINE_ITERS = config.REFINE_ITERS = refine_iters
     config.DUMP_DIR = {
         "outdoor_train": None,
-        "outdoor_test": f"dump/soma_outdoor_I{config.REFINE_ITERS}",
+        "outdoor_test": f"dump/slim_outdoor_I{config.REFINE_ITERS}",
         "indoor_train": None,
-        "indoor_test": f"dump/soma_indoor_I{config.REFINE_ITERS}",
+        "indoor_test": f"dump/slim_indoor_I{config.REFINE_ITERS}",
     }[config.MODE]
     config.MODEL.OPTIMIZED_DUAL_SOFTMAX = config.OPTIMIZED_DUAL_SOFTMAX = optimized_ds
     config.AMP = amp if amp is not None else config.AMP
@@ -128,7 +128,7 @@ def main():
     profiler = build_profiler("inference")
 
     # Lightning module
-    model = PL_SoMa(
+    model = PL_SLiM(
         config=config,
         pretrained_ckpt=ckpt_path,
         profiler=profiler,
@@ -137,7 +137,7 @@ def main():
     loguru_logger.info("Lightning Module initialized!")
 
     # Lightning data
-    data_module = SoMa_Dataset(config=config)
+    data_module = SLiM_Dataset(config=config)
     loguru_logger.info("Data Module initialized!")
 
     # Torch Lightning Trainer
