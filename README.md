@@ -2,8 +2,8 @@
 > Choo Sin Wai, Bo Li\* \
 > \* corresponding author
 
-> **SoMa means Salient-only Matching** \
-> *When we submitted the paper, we not yet have an official abbreviation. Following a reviewer’s suggestion, we later decided to abbreviate our method as SoMa. However, since the paper title cannot be changed after rebuttal, the final title does not include “SoMa”.*
+> **SLiM means Salient Lightweight Matching** \
+> *When we submitted the paper, we not yet have an official abbreviation. Following a reviewer’s suggestion, we later decided to abbreviate our method as SLiM. However, since the paper title cannot be changed after rebuttal, the final title does not include “SLiM”.*
 
 <p align="center">
   <a href="https://openreview.net/profile?id=%7EChoo_Sin_Wai1">
@@ -59,7 +59,7 @@
 - Download the dataset indices (filename: data.7z) from this [Google Drive](https://drive.google.com/drive/folders/1fhAHN5tYr4yANkkFSHJ5kXjcSnepu0l3?usp=sharing) or [Baidu Netdisk](https://pan.baidu.com/s/18c-vLbP2mierBjLUCNroZA?pwd=22w1) [password: 22w1].
 - Unzip them and place them under the project root as follows:
 ```
-SoMa
+SLiM
 └── data
      ├── megadepth
      │   └── index
@@ -98,18 +98,18 @@ We symlink the datasets into the `data` directory under the project root.
 ```bash
 # scannet
 # -- # train dataset
-ln -s /path/to/scannet_train/* /path/to/SoMa/data/scannet/train
+ln -s /path/to/scannet_train/* /path/to/SLiM/data/scannet/train
 
 # megadepth
 # -- # train and test dataset (train and test share the same dataset)
-ln -sv /path/to/megadepth/phoenix /path/to/megadepth_d2net/Undistorted_SfM /path/to/SoMa/data/megadepth/train
-ln -sv /path/to/megadepth/phoenix /path/to/megadepth_d2net/Undistorted_SfM /path/to/SoMa/data/megadepth/test
+ln -sv /path/to/megadepth/phoenix /path/to/megadepth_d2net/Undistorted_SfM /path/to/SLiM/data/megadepth/train
+ln -sv /path/to/megadepth/phoenix /path/to/megadepth_d2net/Undistorted_SfM /path/to/SLiM/data/megadepth/test
 ```
 
 #### 1.4 🧱 Final data structure
 
 ```
-SoMa
+SLiM
 └── data
       ├── megadepth
       │   ├── index
@@ -148,16 +148,16 @@ We have tested the following environment on **Ubuntu 22.04**.
   - If your system `gcc/g++` can compile CUDA extensions successfully, you do **not** need to install `gcc/g++` in conda.
 
 ```bash
-conda create -n soma -y python=3.10
-conda activate soma
+conda create -n slim -y python=3.10
+conda activate slim
 
 # torch = 2.1.1+cu118
 pip install torch==2.1.1 torchvision==0.16.1 torchaudio==2.1.1 --index-url https://download.pytorch.org/whl/cu118\
 
 # mamba and causal-conv1d package, check mamba github page if installation/build fails
 conda install cuda-toolkit==11.8 -c nvidia/label/cuda-11.8.0
-pip install causal-conv1d==1.2.1 --no-build-isolation
-pip install mamba-ssm==2.2.2 --no-build-isolation
+pip install causal-conv1d==1.2.1 # try --no-build-isolation if installation failed
+pip install mamba-ssm==2.2.2 # try --no-build-isolation if installation failed
 
 # other dependencies: pytorch-lightning, albumentation, yacs etc.
 pip install -r requirements.txt
@@ -224,7 +224,7 @@ nohup python test.py --config_name indoor_test --device 0,1,2 > indoor_test.log 
 
 ## 📚 Citation
 ```bibtex
-@inproceedings{choo2026soma,
+@inproceedings{choo2026slim,
   title={Scalable Feature Matching via State Space Modeling and Sparse Correlation},
   author={Choo, Sin Wai and Li, Bo},
   booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
