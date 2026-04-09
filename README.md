@@ -1,4 +1,4 @@
-# Scalable Feature Matching via State Space Modeling and Sparse Correlation (CVPR 2026)
+# Scalable Feature Matching via State Space Modeling and Sparse Correlation (CVPR 2026 Highlight ⭐)
 > Choo Sin Wai, Bo Li\* \
 > \* corresponding author
 
@@ -36,6 +36,7 @@
 ## 📰 News
 
 - 🎉🎉🎉 [2026.02] Our paper is accepted to CVPR 2026.
+- 🎉🎉🎉 [2026.04] Our paper is selected as a CVPR 2026 Highlight.
 
 <a id="todo"></a>
 
