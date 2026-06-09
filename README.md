@@ -6,21 +6,31 @@
 > *When we submitted the paper, we not yet have an official abbreviation. Following a reviewer’s suggestion, we later decided to abbreviate our method as SLiM. However, since the paper title cannot be changed after rebuttal, the final title does not include “SLiM”.*
 
 <p align="center">
-  <a href="https://openreview.net/profile?id=%7EChoo_Sin_Wai1">
-    <img src="https://img.shields.io/badge/Paper-Website-blue" alt="Paper" />
+  <a href="https://openaccess.thecvf.com/content/CVPR2026/papers/Choo_Scalable_Feature_Matching_via_State_Space_Modeling_and_Sparse_Correlation_CVPR_2026_paper.pdf">
+    <img src="https://img.shields.io/badge/Paper-CVPR-blue" alt="Paper" />
   </a>
+  &nbsp;
+  <a href="https://www.youtube.com/watch?v=EpgQV4qM4-s&t=2s">
+    <img src="https://img.shields.io/badge/Video-Youtube-red" alt="Youtube" />
+  </a>
+</p>
+
+<p align="center">
+  <img src="assets/poster_5120.png" width="800" alt="CVPR 2026 poster" />
+  <br/>
+  <sub>Figure 1: CVPR 2026 poster.</sub>
 </p>
 
 <p align="center">
   <img src="assets/pipeline.png" width="400" alt="Method pipeline" />
   <br/>
-  <sub>Figure 1: Method pipeline.</sub>
+  <sub>Figure 2: Method pipeline.</sub>
 </p>
 
 <p align="center">
   <img src="assets/intro_image.png" width="400" alt="Comparison" />
   <br/>
-  <sub>Figure 2: Accuracy-efficiency tradeoff comparison on MegaDepth.</sub>
+  <sub>Figure 3: Accuracy-efficiency tradeoff comparison on MegaDepth.</sub>
 </p>
 
 - [📰 News](#news)

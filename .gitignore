@@ -4,10 +4,15 @@ __pycache__/
 # log files
 *.log
 dump/*
+tmp/
 # vscode cache
-.vscode/
+.vscode//
+.vs
 # jupyter files
 *.ipynb
+# codex
+.codex-tmp/
+.codex/
 
 # ScanNet
 data/scannet/index
